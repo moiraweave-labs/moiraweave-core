@@ -199,14 +199,14 @@ jobs:
     permissions:
       contents: write   # git push to develop
     steps:
-      # Checkout `develop` — main is a protected branch that requires PRs,
-      # so the bot commits the Helm tag bump there instead.  The change flows
-      # to main on the next develop→main PR.
-      - name: Checkout develop
+      # HELM_BUMP_TOKEN is a Fine-Grained PAT (contents: write) owned by a repo
+      # admin, which lets the bot push directly to protected main.
+      # Fallback to GITHUB_TOKEN keeps the job non-fatal if the secret is absent
+      # (e.g. forks), but the push to main will fail in that case.
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: develop
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.HELM_BUMP_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Install yq
         run: |
@@ -234,7 +234,7 @@ jobs:
           yq -i '.worker.image.tag = "${{ steps.release.outputs.tag }}"' \
             infra/helm/moiraweave/values.yaml
 
-      - name: Commit & push to develop
+      - name: Commit & push to main
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -243,4 +243,4 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit --no-verify \
             -m "chore(helm): bump image tags to ${{ steps.release.outputs.tag }} [skip ci]"
-          git push origin develop
+          git push origin main
