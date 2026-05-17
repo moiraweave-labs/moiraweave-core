@@ -208,12 +208,6 @@ jobs:
         with:
           token: ${{ secrets.HELM_BUMP_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Install yq
-        run: |
-          sudo wget -qO /usr/local/bin/yq \
-            https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-
       - name: Resolve release tag or fallback
         id: release
         shell: bash
@@ -225,14 +219,14 @@ jobs:
           fi
 
       - name: Bump api-gateway image tag
-        run: |
-          yq -i '.apiGateway.image.tag = "${{ steps.release.outputs.tag }}"' \
-            infra/helm/moiraweave/values.yaml
+        uses: mikefarah/yq@v4.45.1
+        with:
+          cmd: yq -i '.apiGateway.image.tag = "${{ steps.release.outputs.tag }}"' infra/helm/moiraweave/values.yaml
 
       - name: Bump worker image tag
-        run: |
-          yq -i '.worker.image.tag = "${{ steps.release.outputs.tag }}"' \
-            infra/helm/moiraweave/values.yaml
+        uses: mikefarah/yq@v4.45.1
+        with:
+          cmd: yq -i '.worker.image.tag = "${{ steps.release.outputs.tag }}"' infra/helm/moiraweave/values.yaml
 
       - name: Commit & push to main
         run: |
