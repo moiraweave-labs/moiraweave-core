@@ -46,8 +46,6 @@ apiGateway:
       value: 100/minute
     - name: RATE_LIMIT_AUTH
       value: 10/minute
-    - name: QDRANT_COLLECTION
-      value: transcriptions
     - name: EMBEDDING_MODEL
       value: BAAI/bge-small-en-v1.5
     - name: PIPELINES_DIR
@@ -103,10 +101,6 @@ worker:
       cpu: 1000m
       memory: 1Gi
   env:
-    - name: QDRANT_COLLECTION
-      value: transcriptions
-    - name: EMBEDDING_MODEL
-      value: BAAI/bge-small-en-v1.5
     - name: LOG_LEVEL
       value: INFO
     - name: PIPELINES_DIR

@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # Qdrant (embedding snapshots)
     qdrant_url: str = "http://qdrant.moiraweave.svc.cluster.local:6333"
-    qdrant_collection: str = "transcriptions"
+    qdrant_collection: str = "embeddings"
     # Number of recent vectors to sample for current window
     qdrant_sample_size: int = 500
     # Number of reference vectors to compare against

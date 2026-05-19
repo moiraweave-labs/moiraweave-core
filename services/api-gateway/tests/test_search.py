@@ -63,7 +63,9 @@ async def test_search_empty_collection_returns_empty(
     mock_qdrant.query = AsyncMock(side_effect=err)
 
     # When
-    response = await auth_client.post("/v1/search", json={"collection": "docs", "query": "anything"})
+    response = await auth_client.post(
+        "/v1/search", json={"collection": "docs", "query": "anything"}
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["results"] == []
@@ -84,28 +86,38 @@ async def test_search_qdrant_server_error_propagates(
 
     # When / Then: ASGITransport with raise_app_exceptions=True propagates it
     with pytest.raises(UnexpectedResponse):
-        await auth_client.post("/v1/search", json={"collection": "docs", "query": "anything"})
+        await auth_client.post(
+            "/v1/search", json={"collection": "docs", "query": "anything"}
+        )
 
 
 async def test_search_no_auth_returns_4xx(client: AsyncClient) -> None:
-    response = await client.post("/v1/search", json={"collection": "docs", "query": "test"})
+    response = await client.post(
+        "/v1/search", json={"collection": "docs", "query": "test"}
+    )
     assert response.status_code in {401, 403}
 
 
 async def test_search_query_too_long_returns_422(auth_client: AsyncClient) -> None:
-    response = await auth_client.post("/v1/search", json={"collection": "docs", "query": "x" * 501})
+    response = await auth_client.post(
+        "/v1/search", json={"collection": "docs", "query": "x" * 501}
+    )
     assert response.status_code == 422
 
 
 async def test_search_empty_query_returns_422(auth_client: AsyncClient) -> None:
-    response = await auth_client.post("/v1/search", json={"collection": "docs", "query": ""})
+    response = await auth_client.post(
+        "/v1/search", json={"collection": "docs", "query": ""}
+    )
     assert response.status_code == 422
 
 
 async def test_search_limit_out_of_range_returns_422(
     auth_client: AsyncClient,
 ) -> None:
-    response = await auth_client.post("/v1/search", json={"collection": "docs", "query": "test", "limit": 25})
+    response = await auth_client.post(
+        "/v1/search", json={"collection": "docs", "query": "test", "limit": 25}
+    )
     assert response.status_code == 422
 
 
@@ -138,7 +150,9 @@ async def test_search_multiple_results_ordered(
     )
 
     # When
-    response = await auth_client.post("/v1/search", json={"collection": "docs", "query": "test", "limit": 2})
+    response = await auth_client.post(
+        "/v1/search", json={"collection": "docs", "query": "test", "limit": 2}
+    )
 
     # Then
     body = response.json()
