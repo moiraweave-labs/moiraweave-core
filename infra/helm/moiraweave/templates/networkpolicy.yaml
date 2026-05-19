@@ -1,0 +1,156 @@
+{{- if .Values.networkPolicy.enabled }}
+# ---------------------------------------------------------------------------
+# NetworkPolicy — defence-in-depth: deny all by default, then allow
+# only the minimum required traffic between components.
+#
+# Requires a CNI that enforces NetworkPolicy (e.g. Calico, Cilium, Weave Net).
+# ---------------------------------------------------------------------------
+
+# 1. Default deny — drop all ingress/egress within the namespace unless
+#    explicitly permitted by one of the policies below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "moiraweave.fullname" . }}-default-deny
+  labels:
+    {{- include "moiraweave.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# 2. API Gateway — accepts inbound HTTP from ingress-nginx only.
+#    Allows outbound to Redis, Qdrant, and DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "moiraweave.fullname" . }}-api-gateway
+  labels:
+    {{- include "moiraweave.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "moiraweave.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Qdrant
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+    # DNS resolution
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# 3. Worker — accepts inbound metrics scraping from Prometheus only.
+#    Allows outbound to Redis, Qdrant, step pods, and DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "moiraweave.fullname" . }}-worker
+  labels:
+    {{- include "moiraweave.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "moiraweave.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Prometheus metrics scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Qdrant
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+    # Step inference pods (port 8080 — KServe V2 convention)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "moiraweave.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: step
+      ports:
+        - protocol: TCP
+          port: 8080
+    # DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# 4. Step pods — accept inbound from worker only on the inference port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "moiraweave.fullname" . }}-steps
+  labels:
+    {{- include "moiraweave.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "moiraweave.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: step
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "moiraweave.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: worker
+      ports:
+        - protocol: TCP
+          port: 8080
+
+{{- end }}

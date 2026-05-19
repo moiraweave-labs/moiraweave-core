@@ -111,6 +111,43 @@ worker:
       value: INFO
     - name: PIPELINES_DIR
       value: /workspace/pipelines
+  livenessProbe:
+    exec:
+      command:
+        - python
+        - -c
+        - "import socket; s=socket.create_connection(('127.0.0.1',9090),1); s.close()"
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    failureThreshold: 3
+  readinessProbe:
+    exec:
+      command:
+        - python
+        - -c
+        - "import socket; s=socket.create_connection(('127.0.0.1',9090),1); s.close()"
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    failureThreshold: 3
+  # HPA — standard Kubernetes HPA for the worker.
+  # Set hpa.type: "keda" to use KEDA ScaledObject (Redis Streams trigger) instead.
+  hpa:
+    enabled: false
+    # "hpa" uses standard kubernetes HPA; "keda" uses KEDA ScaledObject.
+    type: "hpa"
+    minReplicas: 1
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    # KEDA-specific settings (only used when type = "keda").
+    # Requires KEDA operator installed in the cluster.
+    keda:
+      # Redis Streams trigger — scales worker based on stream consumer group lag.
+      redisStreamKey: moiraweave:jobs
+      consumerGroup: workers
+      pendingEntriesCount: "5"  # scale-up threshold per replica
+      # Address of the Redis instance (overrides moiraweave.redisUrl if set).
+      # Defaults to the in-cluster Redis service derived from moiraweave.redisUrl.
+      address: ""
   # PodDisruptionBudget for worker.
   pdb:
     enabled: true
@@ -123,7 +160,12 @@ redis:
   enabled: true
   architecture: standalone
   auth:
-    enabled: false
+    # Enable Redis password authentication.
+    # Set auth.existingSecret + auth.existingSecretPasswordKey or auth.password.
+    # Override with: --set redis.auth.password=<your-password>
+    enabled: true
+    existingSecret: moiraweave-secrets
+    existingSecretPasswordKey: REDIS_PASSWORD
   master:
     persistence:
       enabled: false
@@ -140,6 +182,18 @@ qdrant:
 serviceAccount:
   create: true
   name: "" # leave empty to derive from fullname
+# ---------------------------------------------------------------------------
+# RBAC — Role + RoleBinding for the ServiceAccount.
+# Grants minimal permissions: read ConfigMaps and Secrets within the namespace.
+# ---------------------------------------------------------------------------
+rbac:
+  create: true
+# ---------------------------------------------------------------------------
+# NetworkPolicy — default-deny + explicit allow rules per component.
+# Requires a CNI that enforces NetworkPolicy (e.g. Calico, Cilium, Weave).
+# ---------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
 # ---------------------------------------------------------------------------
 # vLLM inference server (F2-4)
 # Disabled by default; enable via values-gpu.yaml overlay or set vllm.enabled=true

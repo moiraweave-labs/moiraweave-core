@@ -34,5 +34,9 @@ spec:
             - name: metrics
               containerPort: 9090
               protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.worker.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.worker.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}

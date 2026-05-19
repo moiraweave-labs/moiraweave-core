@@ -1,0 +1,101 @@
+# ---------------------------------------------------------------------------
+# values-prod.yaml — production overlay
+#
+# Usage:
+#   helm upgrade --install moiraweave infra/helm/moiraweave \
+#     -f infra/helm/moiraweave/values-prod.yaml \
+#     --namespace moiraweave-prod --create-namespace
+#
+# Prerequisites:
+#   kubectl create secret generic moiraweave-secrets \
+#     --from-literal=JWT_SECRET_KEY=<32-char-secret> \
+#     --from-literal=REDIS_PASSWORD=<strong-password> \
+#     --from-literal=HF_TOKEN=<optional-hf-token> \
+#     --namespace moiraweave-prod
+# ---------------------------------------------------------------------------
+
+apiGateway:
+  replicaCount: 2
+  image:
+    pullPolicy: IfNotPresent
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 60
+  pdb:
+    enabled: true
+    minAvailable: 1
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    timeoutSeconds: 5
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8000
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  startupProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    failureThreshold: 30
+    periodSeconds: 5
+
+worker:
+  replicaCount: 2
+  image:
+    pullPolicy: IfNotPresent
+  pdb:
+    enabled: true
+    minAvailable: 1
+  livenessProbe:
+    exec:
+      command:
+        - python
+        - -c
+        - "import socket; s=socket.create_connection(('127.0.0.1',9090),1); s.close()"
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    exec:
+      command:
+        - python
+        - -c
+        - "import socket; s=socket.create_connection(('127.0.0.1',9090),1); s.close()"
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+redis:
+  auth:
+    enabled: true
+    existingSecret: moiraweave-secrets
+    existingSecretPasswordKey: REDIS_PASSWORD
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+      storageClass: "" # override with cloud provider class, e.g. "gp3" (AWS) or "pd-ssd" (GCP)
+
+qdrant:
+  replicaCount: 1
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: "" # override with cloud provider class
+
+networkPolicy:
+  enabled: true
+
+rbac:
+  create: true

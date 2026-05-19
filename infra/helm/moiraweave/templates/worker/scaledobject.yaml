@@ -1,0 +1,59 @@
+{{- if and .Values.worker.hpa.enabled (eq .Values.worker.hpa.type "keda") }}
+# ---------------------------------------------------------------------------
+# KEDA ScaledObject — scales worker replicas based on Redis Streams consumer
+# group pending-entries lag.
+#
+# Requirements:
+#   - KEDA operator installed (https://keda.sh/docs/deploy/)
+#   - A TriggerAuthentication (or ClusterTriggerAuthentication) named
+#     {{ include "moiraweave.fullname" . }}-redis-auth that references
+#     the Redis password secret.
+# ---------------------------------------------------------------------------
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "moiraweave.worker.fullname" . }}
+  labels:
+    {{- include "moiraweave.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "moiraweave.worker.fullname" . }}
+  minReplicaCount: {{ .Values.worker.hpa.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.hpa.maxReplicas }}
+  pollingInterval: 15
+  cooldownPeriod: 60
+  triggers:
+    - type: redis-streams
+      metadata:
+        # Stream key consumed by the worker
+        streamKey: {{ .Values.worker.hpa.keda.redisStreamKey | quote }}
+        consumerGroup: {{ .Values.worker.hpa.keda.consumerGroup | quote }}
+        pendingEntriesCount: {{ .Values.worker.hpa.keda.pendingEntriesCount | quote }}
+        {{- if .Values.worker.hpa.keda.address }}
+        address: {{ .Values.worker.hpa.keda.address | quote }}
+        {{- else }}
+        # Use the in-cluster Redis URL derived from chart values.
+        address: {{ include "moiraweave.redisUrl" . | quote }}
+        {{- end }}
+        {{- if .Values.redis.auth.enabled }}
+      authenticationRef:
+        name: {{ include "moiraweave.fullname" . }}-redis-auth
+        {{- end }}
+
+---
+{{- if .Values.redis.auth.enabled }}
+# TriggerAuthentication — exposes the Redis password to the KEDA trigger.
+# The secret must exist before KEDA polls for it.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "moiraweave.fullname" . }}-redis-auth
+  labels:
+    {{- include "moiraweave.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: {{ .Values.redis.auth.existingSecret }}
+      key: {{ .Values.redis.auth.existingSecretPasswordKey }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,42 @@
+{{- if and .Values.serviceAccount.create .Values.rbac.create }}
+# ---------------------------------------------------------------------------
+# RBAC — minimal permissions for the MoiraWeave ServiceAccount.
+#
+# The api-gateway and worker pods need to:
+#   - Read their own ConfigMaps (pipeline definitions, feature flags).
+#   - Read Secrets they own (not cluster-wide secrets).
+#
+# No ClusterRole is granted — all access is namespace-scoped.
+# ---------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "moiraweave.fullname" . }}
+  labels:
+    {{- include "moiraweave.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    # Only read secrets that belong to this release (enforced by name in practice
+    # at the application layer — the RBAC rule is namespace-scoped).
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "moiraweave.fullname" . }}
+  labels:
+    {{- include "moiraweave.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "moiraweave.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "moiraweave.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

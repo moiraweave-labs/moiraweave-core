@@ -41,6 +41,7 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
         args: [--unsafe]  # allow custom YAML tags (Helm, k8s)
+        exclude: ^infra/helm/.*/templates/  # Helm templates use Go syntax, not valid YAML
       - id: check-toml
       - id: check-merge-conflict
       - id: detect-private-key
