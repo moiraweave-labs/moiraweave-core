@@ -215,6 +215,8 @@ jobs:
         run: uv sync --frozen --all-packages
 
       - name: Build mock-step image
+        env:
+          JWT_SECRET_KEY: ${{ secrets.E2E_JWT_SECRET_KEY }}
         run: |
           docker compose \
             -f docker-compose.yml \
@@ -241,6 +243,8 @@ jobs:
 
       - name: Tear down stack (always)
         if: always()
+        env:
+          JWT_SECRET_KEY: ${{ secrets.E2E_JWT_SECRET_KEY }}
         run: |
           docker compose \
             -f docker-compose.yml \
@@ -249,6 +253,8 @@ jobs:
 
       - name: Show service logs on failure
         if: failure()
+        env:
+          JWT_SECRET_KEY: ${{ secrets.E2E_JWT_SECRET_KEY }}
         run: |
           docker compose \
             -f docker-compose.yml \
