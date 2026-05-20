@@ -91,7 +91,11 @@ testpaths = ["services", "tests"]
 asyncio_mode = "auto"
 # importlib avoids module-name collisions between same-named test packages
 # across multiple service directories.
-addopts = "--cov=services --cov-report=term-missing --cov-report=xml --import-mode=importlib"
+# tests/e2e requires docker-compose stack; excluded from default run.
+addopts = "--cov=services --cov-report=term-missing --cov-report=xml --import-mode=importlib --ignore=tests/e2e"
+markers = [
+    "e2e: end-to-end tests that require the docker-compose stack (run via make test-e2e)",
+]
 
 
 [tool.coverage.run]

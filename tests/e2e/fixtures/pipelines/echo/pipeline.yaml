@@ -1,0 +1,10 @@
+name: echo
+version: "1"
+description: "Single-step echo pipeline used by the E2E test suite."
+trigger:
+  type: stream
+  stream: "pipelines:echo:jobs"
+steps:
+  - id: echo
+    task: text-passthrough
+    url: http://mock-step:8080

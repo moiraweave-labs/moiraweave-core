@@ -32,6 +32,7 @@ from app.models.pipelines import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/pipelines", tags=["pipelines"])
 
+
 @router.get("", response_model=list[PipelineInfo], summary="List available pipelines")
 async def list_pipelines(
     settings: Annotated[Settings, Depends(get_settings)],

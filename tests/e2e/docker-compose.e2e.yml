@@ -1,0 +1,60 @@
+# docker-compose.e2e.yml — E2E test overrides
+#
+# Extends docker-compose.yml to:
+#   1. Add the mock-step container (KServe V2 echo step, no ML deps)
+#   2. Mount the E2E fixture pipelines over the default pipelines/ dir
+#   3. Wire up service dependencies so the stack is ready when tests run
+#
+# Usage (local):
+#   JWT_SECRET_KEY=<key> docker compose \
+#     -f docker-compose.yml -f tests/e2e/docker-compose.e2e.yml \
+#     up -d --wait
+#
+# JWT_SECRET_KEY defaults to a test-only value if not set (local dev only).
+
+services:
+  mock-step:
+    build:
+      context: .
+      dockerfile: tests/e2e/mock_step/Dockerfile
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          python -c
+          "import urllib.request;
+          urllib.request.urlopen('http://localhost:8080/v2/health/ready')"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    networks:
+      - moiraweave-net
+
+  api-gateway:
+    environment:
+      # Override JWT secret for E2E tests.
+      # Falls back to a local-only test value when E2E_JWT_SECRET_KEY is unset.
+      JWT_SECRET_KEY: "${E2E_JWT_SECRET_KEY:-e2e-local-test-secret-not-for-production}"
+      # OTel disabled for tests to reduce noise and avoid Jaeger dependency.
+      OTEL_ENABLED: "false"
+      PIPELINES_DIR: "/e2e-pipelines"
+    volumes:
+      - ./tests/e2e/fixtures/pipelines:/e2e-pipelines:ro
+    # Override the base depends_on to drop qdrant (not used in E2E echo pipeline).
+    depends_on:
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+      mock-step:
+        condition: service_healthy
+
+  worker:
+    environment:
+      PIPELINES_DIR: "/e2e-pipelines"
+    volumes:
+      - ./tests/e2e/fixtures/pipelines:/e2e-pipelines:ro
+    depends_on:
+      mock-step:
+        condition: service_healthy

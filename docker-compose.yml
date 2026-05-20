@@ -107,7 +107,7 @@ services:
   # ── Jaeger (all-in-one) ─────────────────────────────────────────────────────
   # OTel trace collector + UI — http://localhost:16686
   jaeger:
-    image: jaegertracing/all-in-one:1.65
+    image: jaegertracing/all-in-one:latest
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686"    # Jaeger UI
       - "4317:4317"                          # OTLP/gRPC

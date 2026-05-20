@@ -38,6 +38,11 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY services/shared ./services/shared
 COPY services/api-gateway/app ./app
 
+# The venv's editable install for moiraweave_shared has a path-hook that was
+# built on the CI/dev host, so it won't resolve inside the image.  Fix by
+# adding the source directory to the Python path via a .pth file.
+RUN echo '/app/services/shared' > /app/.venv/lib/python3.13/site-packages/moiraweave_shared_local.pth
+
 # Pre-download the embedding model so the first request has no cold-start.
 # Must run before switching to non-root user so files are owned by root and
 # readable by appuser.
