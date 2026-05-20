@@ -187,3 +187,81 @@ async def test_get_pipeline_job_status_returns_403_for_other_user(
 
     resp = await auth_client.get(f"/v1/pipelines/jobs/{job_id}")
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/pipelines/jobs
+# ---------------------------------------------------------------------------
+
+
+async def test_list_pipeline_jobs_returns_user_jobs(
+    auth_client: AsyncClient, fake_redis: FakeRedis
+) -> None:
+    for i, st in enumerate(("pending", "completed", "failed")):
+        await fake_redis.hset(
+            f"pipeline:job:list-job-{i}",
+            mapping={
+                "status": st,
+                "pipeline_id": "audio-rag",
+                "user": "testuser",
+                "created_at": f"2026-01-0{i + 1}T00:00:00+00:00",
+            },
+        )
+
+    resp = await auth_client.get("/v1/pipelines/jobs")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 3
+    # newest first
+    assert body[0]["created_at"] > body[1]["created_at"]
+
+
+async def test_list_pipeline_jobs_filters_by_pipeline_id(
+    auth_client: AsyncClient, fake_redis: FakeRedis
+) -> None:
+    await fake_redis.hset(
+        "pipeline:job:filter-job-a",
+        mapping={
+            "status": "pending",
+            "pipeline_id": "audio-rag",
+            "user": "testuser",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    await fake_redis.hset(
+        "pipeline:job:filter-job-b",
+        mapping={
+            "status": "pending",
+            "pipeline_id": "image-search",
+            "user": "testuser",
+            "created_at": "2026-01-02T00:00:00+00:00",
+        },
+    )
+
+    resp = await auth_client.get("/v1/pipelines/jobs?pipeline_id=audio-rag")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert all(j["pipeline_id"] == "audio-rag" for j in body)
+
+
+async def test_list_pipeline_jobs_excludes_other_users(
+    auth_client: AsyncClient, fake_redis: FakeRedis
+) -> None:
+    await fake_redis.hset(
+        "pipeline:job:other-user-job",
+        mapping={
+            "status": "pending",
+            "pipeline_id": "audio-rag",
+            "user": "someone-else",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+
+    resp = await auth_client.get("/v1/pipelines/jobs")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_list_pipeline_jobs_requires_auth(client: AsyncClient) -> None:
+    resp = await client.get("/v1/pipelines/jobs")
+    assert resp.status_code == 401

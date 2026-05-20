@@ -2,10 +2,12 @@
 
 Routes:
     GET  /v1/pipelines                       — list declared pipelines
+    GET  /v1/pipelines/jobs                  — list jobs for current user
     POST /v1/pipelines/{pipeline_id}/jobs    — submit a job to a pipeline
     GET  /v1/pipelines/jobs/{job_id}         — poll pipeline job status
 """
 
+import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -59,6 +61,75 @@ async def list_pipelines(
         )
         for p in pipelines
     ]
+
+
+@router.get(
+    "/jobs",
+    response_model=list[PipelineJobStatus],
+    summary="List pipeline jobs for current user",
+)
+async def list_pipeline_jobs(
+    redis: RedisClient,
+    current_user: CurrentUser,
+    pipeline_id: str | None = None,
+    limit: int = 20,
+) -> list[PipelineJobStatus]:
+    """Return recent pipeline jobs submitted by the authenticated user.
+
+    :param redis: Async Redis client.
+    :param current_user: Authenticated user extracted from the JWT.
+    :param pipeline_id: Optional filter — only jobs for this pipeline.
+    :param limit: Maximum number of jobs to return (default 20, max 100).
+    :returns: Jobs sorted newest-first.
+    """
+    limit = min(max(1, limit), 100)
+    pattern = f"{JOB_KEY_PREFIX}:*"
+
+    keys: list[str] = []
+    cursor = 0
+    while True:
+        cursor, batch = await redis.scan(cursor, match=pattern, count=100)  # type: ignore[misc]
+        keys.extend(batch)
+        if cursor == 0:
+            break
+
+    if not keys:
+        return []
+
+    pipe = redis.pipeline()
+    for key in keys:
+        pipe.hgetall(key)
+    all_data: list[dict[str, str]] = await pipe.execute()  # type: ignore[misc]
+
+    jobs: list[PipelineJobStatus] = []
+    for key, data in zip(keys, all_data, strict=True):
+        if not data:
+            continue
+        if data.get("user") != current_user.subject:
+            continue
+        if pipeline_id and data.get("pipeline_id") != pipeline_id:
+            continue
+
+        job_id_val = key.removeprefix(f"{JOB_KEY_PREFIX}:")
+        result: dict[str, object] | None = None
+        if raw := data.get("result"):
+            with contextlib.suppress(json.JSONDecodeError):
+                result = json.loads(raw)
+
+        jobs.append(
+            PipelineJobStatus(
+                job_id=job_id_val,
+                pipeline_id=data.get("pipeline_id", ""),
+                status=data.get("status", "unknown"),
+                result=result,
+                error=data.get("error"),
+                created_at=data.get("created_at", ""),
+                completed_at=data.get("completed_at"),
+            )
+        )
+
+    jobs.sort(key=lambda j: j.created_at, reverse=True)
+    return jobs[:limit]
 
 
 @router.post(
