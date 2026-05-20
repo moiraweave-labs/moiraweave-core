@@ -15,7 +15,7 @@ imageRegistry: ghcr.io/moiraweave-labs
 apiGateway:
   image:
     repository: ghcr.io/moiraweave-labs/moiraweave-core/api-gateway
-    tag: sha-47a1a88
+    tag: sha-7902230
     pullPolicy: IfNotPresent
   replicaCount: 2
   service:
@@ -90,7 +90,7 @@ apiGateway:
 worker:
   image:
     repository: ghcr.io/moiraweave-labs/moiraweave-core/worker
-    tag: sha-47a1a88
+    tag: sha-7902230
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
@@ -142,7 +142,7 @@ worker:
       redisStreamKey: "pipelines:image-search:jobs"
       # Must match CONSUMER_GROUP in moiraweave_shared.streams (currently "moiraweave-pipeline").
       consumerGroup: moiraweave-pipeline
-      pendingEntriesCount: "5"  # scale-up threshold per replica
+      pendingEntriesCount: "5" # scale-up threshold per replica
       # Address of the Redis instance (overrides moiraweave.redisUrl if set).
       # Defaults to the in-cluster Redis service derived from moiraweave.redisUrl.
       address: ""
