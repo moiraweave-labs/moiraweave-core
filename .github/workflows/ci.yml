@@ -241,16 +241,6 @@ jobs:
           uv run pytest tests/e2e/ -v --no-cov --import-mode=importlib \
             --tb=short
 
-      - name: Tear down stack (always)
-        if: always()
-        env:
-          JWT_SECRET_KEY: ${{ secrets.E2E_JWT_SECRET_KEY }}
-        run: |
-          docker compose \
-            -f docker-compose.yml \
-            -f tests/e2e/docker-compose.e2e.yml \
-            down --volumes
-
       - name: Show service logs on failure
         if: failure()
         env:
@@ -260,6 +250,16 @@ jobs:
             -f docker-compose.yml \
             -f tests/e2e/docker-compose.e2e.yml \
             logs --no-color
+
+      - name: Tear down stack (always)
+        if: always()
+        env:
+          JWT_SECRET_KEY: ${{ secrets.E2E_JWT_SECRET_KEY }}
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f tests/e2e/docker-compose.e2e.yml \
+            down --volumes
 
   # ---------------------------------------------------------------------------
   # Job 3 — Bump image tag in Helm values and commit
