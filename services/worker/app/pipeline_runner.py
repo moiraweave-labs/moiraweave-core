@@ -128,7 +128,4 @@ async def _call_step(
     resp.raise_for_status()
 
     parsed = _InferResponse.model_validate(resp.json())
-    return {
-        t.name: t.data[0] if len(t.data) == 1 else t.data
-        for t in parsed.outputs
-    }
+    return {t.name: t.data[0] if len(t.data) == 1 else t.data for t in parsed.outputs}
