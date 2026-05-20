@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from pydantic import ValidationError
 from moiraweave_shared.pipeline import PipelineDefinition
+from pydantic import ValidationError
 
 from app.pipeline_runner import PipelineRunner
 
