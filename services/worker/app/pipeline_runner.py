@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from moiraweave_shared.pipeline import PipelineDefinition, StepConfig
@@ -18,6 +19,19 @@ if TYPE_CHECKING:
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class _InferTensor(BaseModel):
+    """Single tensor entry in a KServe V2 inference response."""
+
+    name: str
+    data: list[Any]
+
+
+class _InferResponse(BaseModel):
+    """KServe V2 inference response envelope (outputs only)."""
+
+    outputs: list[_InferTensor] = []
 
 
 class PipelineRunner:
@@ -33,19 +47,39 @@ class PipelineRunner:
     async def run(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute the pipeline for a single job payload.
 
-        The pipeline payload is passed as V2 tensors to the first step.
-        Each subsequent step receives the previous step's output tensors
-        as its inputs.
+        Each step receives either the previous step's output (when
+        ``input_from`` is ``None``) or the named upstream step's output (when
+        ``input_from`` is set to a step ID).  The first step always receives
+        the original job *payload*.
 
         :param payload: Flat ``{name: value}`` dict of job inputs.
         :returns: Final step output as a ``{tensor_name: value}`` dict.
         :raises httpx.HTTPStatusError: If any step returns a non-2xx response.
+        :raises httpx.RequestError: If any step is unreachable or times out.
+        :raises ValueError: If ``input_from`` references a step that has not run yet.
         """
-        current: dict[str, Any] = payload
-        async with httpx.AsyncClient(timeout=get_settings().step_timeout_seconds) as client:
+        step_outputs: dict[str, dict[str, Any]] = {}
+        last_output: dict[str, Any] = payload
+
+        async with httpx.AsyncClient(
+            timeout=get_settings().step_timeout_seconds
+        ) as client:
             for step in self._pipeline.steps:
-                current = await _call_step(step, current, client)
-        return current
+                if step.input_from is not None:
+                    if step.input_from not in step_outputs:
+                        raise ValueError(
+                            f"Step '{step.id}' declares input_from='{step.input_from}' "
+                            f"but that step ID has not executed yet or does not exist."
+                        )
+                    step_input = step_outputs[step.input_from]
+                else:
+                    step_input = last_output
+
+                output = await _call_step(step, step_input, client)
+                step_outputs[step.id] = output
+                last_output = output
+
+        return last_output
 
     async def check_ready(self, timeout: float = 5.0) -> bool:
         """Return ``True`` when every step's ``GET /v2/health/ready`` responds 200.
@@ -80,6 +114,8 @@ async def _call_step(
     :param client: Shared async HTTP client (connection pool reused across steps).
     :returns: ``{tensor_name: value}`` dict from the step's response outputs.
     :raises httpx.HTTPStatusError: When the step returns a non-2xx status.
+    :raises httpx.RequestError: When the step is unreachable or times out.
+    :raises pydantic.ValidationError: When the response body does not conform to V2 schema.
     """
     url = f"{step.url}/v2/models/{step.id}/infer"
     request_body = {
@@ -91,9 +127,8 @@ async def _call_step(
     resp = await client.post(url, json=request_body)
     resp.raise_for_status()
 
-    response_data: dict[str, Any] = resp.json()
-    raw_outputs: list[Any] = response_data.get("outputs", [])
+    parsed = _InferResponse.model_validate(resp.json())
     return {
-        t["name"]: t["data"][0] if len(t["data"]) == 1 else t["data"]
-        for t in raw_outputs
+        t.name: t.data[0] if len(t.data) == 1 else t.data
+        for t in parsed.outputs
     }

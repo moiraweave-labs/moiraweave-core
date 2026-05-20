@@ -33,7 +33,8 @@ class StepConfig(BaseModel):
     :param url: Base URL of the step service, e.g. ``"http://step:8000"``.
     :param env: Per-step env var overrides (applied by the orchestrator).
     :param input_from: ID of the upstream step whose outputs feed this step's inputs.
-                       ``None`` means the step reads from the pipeline job payload.
+                       ``None`` means the step reads from the previous step's output
+                       (or from the original job payload if it is the first step).
     """
 
     id: str
