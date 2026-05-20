@@ -122,10 +122,16 @@ async def _process_message(
 
     job_id = msg.job_id
     job_key = f"{job_key_prefix}:{job_id}"
-    payload: dict[str, Any] = json.loads(msg.payload)
+    try:
+        payload: dict[str, Any] = json.loads(msg.payload)
+    except json.JSONDecodeError:
+        logger.exception("pipeline_payload_invalid msg_id=%s job_id=%s", msg_id, job_id)
+        await redis.xack(stream, _CONSUMER_GROUP, msg_id)
+        return
 
     logger.info("pipeline_job_start job_id=%s pipeline=%s", job_id, pipeline_name)
     await redis.hset(job_key, "status", "processing")  # type: ignore[misc]
+    await redis.expire(job_key, job_ttl_seconds)
 
     try:
         result = await runner.run(payload)

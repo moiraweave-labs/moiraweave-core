@@ -15,9 +15,9 @@ import httpx
 if TYPE_CHECKING:
     from moiraweave_shared.pipeline import PipelineDefinition, StepConfig
 
-logger = logging.getLogger(__name__)
+from app.config import get_settings
 
-_STEP_TIMEOUT_SECONDS = 300.0
+logger = logging.getLogger(__name__)
 
 
 class PipelineRunner:
@@ -42,7 +42,7 @@ class PipelineRunner:
         :raises httpx.HTTPStatusError: If any step returns a non-2xx response.
         """
         current: dict[str, Any] = payload
-        async with httpx.AsyncClient(timeout=_STEP_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(timeout=get_settings().step_timeout_seconds) as client:
             for step in self._pipeline.steps:
                 current = await _call_step(step, current, client)
         return current

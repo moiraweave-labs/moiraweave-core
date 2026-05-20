@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Job result TTL in Redis (seconds)
     job_ttl_seconds: int = 3600
 
+    # Per-step HTTP timeout for pipeline execution (seconds)
+    step_timeout_seconds: float = 300.0
+
     # Pipeline-as-code — directory containing per-pipeline subdirectories
     pipelines_dir: str = "pipelines"
 

@@ -13,17 +13,10 @@ jobs:
   release-please:
     runs-on: ubuntu-24.04
     steps:
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
       - name: Run release-please
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          release-type: python
           token: ${{ secrets.GITHUB_TOKEN }}
-          version-file: version.txt
-          changelog-path: CHANGELOG.md
-          packages: |
-            .
-          extra-files: |
-            version.txt
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
