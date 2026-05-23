@@ -7,8 +7,10 @@ import json
 import logging
 from collections.abc import AsyncGenerator  # noqa: TC003
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from moiraweave_shared.control_plane import (
     ControlPlaneRepository,
@@ -205,9 +207,48 @@ async def _authorize_agent_session(
     return session
 
 
-def _deployment_health_status(deployments: list[DeploymentResponse]) -> tuple[str, str]:
+def _deployment_probe_url(endpoint: str) -> str:
+    parsed = urlparse(endpoint)
+    if parsed.path and parsed.path != "/":
+        return endpoint
+    return endpoint.rstrip("/") + "/health"
+
+
+async def _probe_deployment_endpoint(
+    deployment: DeploymentResponse,
+) -> tuple[bool, str] | None:
+    if not deployment.endpoint:
+        return None
+    parsed = urlparse(deployment.endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False, f"Deployment endpoint is not a valid HTTP URL: {deployment.endpoint}"
+    url = _deployment_probe_url(deployment.endpoint)
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            response = await client.get(url)
+    except httpx.HTTPError as exc:
+        return False, f"Health probe failed for {url}: {exc.__class__.__name__}"
+    if 200 <= response.status_code < 400:
+        return True, f"Health probe succeeded for {url}"
+    return False, f"Health probe for {url} returned HTTP {response.status_code}"
+
+
+async def _deployment_health_status(
+    deployments: list[DeploymentResponse],
+) -> tuple[str, str]:
     if not deployments:
         return "unknown", "No deployment record has been registered for this workload"
+    probes = [
+        probe
+        for probe in [
+            await _probe_deployment_endpoint(deployment) for deployment in deployments
+        ]
+        if probe is not None
+    ]
+    if probes:
+        if any(ok for ok, _reason in probes):
+            return "healthy", next(reason for ok, reason in probes if ok)
+        return "degraded", "; ".join(reason for _ok, reason in probes)
     statuses = {deployment.status for deployment in deployments}
     if statuses & {"failed", "lost", "unhealthy"}:
         return "degraded", "At least one deployment is reporting a failed state"
@@ -317,7 +358,7 @@ async def workload_health(
             workload_name=name,
         )
     ]
-    health_status, reason = _deployment_health_status(deployments)
+    health_status, reason = await _deployment_health_status(deployments)
     return WorkloadHealthResponse(
         workload_name=name,
         status=health_status,

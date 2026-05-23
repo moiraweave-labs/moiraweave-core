@@ -10,6 +10,7 @@ dependencies = [
     "slowapi>=0.1.9",
     "PyJWT>=2.9",
     "bcrypt>=4.0",
+    "httpx>=0.28",
     "pydantic-settings>=2.6",
     # Redis
     "redis[hiredis]>=5.0",

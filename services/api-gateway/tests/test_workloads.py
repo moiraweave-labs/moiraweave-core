@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING
 
 from moiraweave_shared.streams import RUN_STREAM
 
+from app.models.workloads import DeploymentResponse
+from app.routes.workloads import _deployment_probe_url, _probe_deployment_endpoint
+
 if TYPE_CHECKING:
+    import pytest
     from fakeredis.aioredis import FakeRedis
     from httpx import AsyncClient
     from moiraweave_shared.control_plane import InMemoryControlPlaneRepository
@@ -28,10 +32,40 @@ def _agent_manifest(name: str = "hermes") -> dict[str, object]:
     }
 
 
+def _deployment_response(endpoint: str | None = None) -> DeploymentResponse:
+    return DeploymentResponse(
+        deployment_id="00000000-0000-0000-0000-000000000001",
+        workload_name="hermes",
+        target="local",
+        status="applied",
+        user="testuser",
+        created_at="2026-01-01T00:00:00+00:00",
+        endpoint=endpoint,
+        metadata={},
+    )
+
+
 async def _register(auth_client: AsyncClient, name: str = "hermes") -> dict[str, object]:
     resp = await auth_client.post("/v1/workloads", json=_agent_manifest(name))
     assert resp.status_code == 201
     return resp.json()
+
+
+def test_deployment_probe_url_defaults_to_health_path() -> None:
+    assert _deployment_probe_url("http://hermes:8000") == "http://hermes:8000/health"
+    assert _deployment_probe_url("http://hermes:8000/readyz") == "http://hermes:8000/readyz"
+
+
+async def test_probe_deployment_endpoint_skips_missing_endpoint() -> None:
+    assert await _probe_deployment_endpoint(_deployment_response()) is None
+
+
+async def test_probe_deployment_endpoint_rejects_invalid_url() -> None:
+    result = await _probe_deployment_endpoint(_deployment_response("hermes:8000"))
+    assert result is not None
+    ok, reason = result
+    assert ok is False
+    assert "not a valid HTTP URL" in reason
 
 
 async def test_register_and_list_workloads(auth_client: AsyncClient) -> None:
@@ -256,7 +290,6 @@ async def test_deployment_record_and_workload_health(auth_client: AsyncClient) -
         json={
             "target": "local",
             "status": "applied",
-            "endpoint": "http://hermes:8000",
             "metadata": {"compose_project": "moiraweave"},
         },
     )
@@ -271,7 +304,33 @@ async def test_deployment_record_and_workload_health(auth_client: AsyncClient) -
     assert health.status_code == 200
     body = health.json()
     assert body["status"] == "healthy"
-    assert body["deployments"][0]["endpoint"] == "http://hermes:8000"
+    assert body["deployments"][0]["metadata"]["compose_project"] == "moiraweave"
+
+
+async def test_workload_health_uses_endpoint_probe(
+    auth_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _register(auth_client)
+
+    async def _probe(_deployment: object) -> tuple[bool, str]:
+        return False, "runtime is not reachable"
+
+    monkeypatch.setattr("app.routes.workloads._probe_deployment_endpoint", _probe)
+    await auth_client.post(
+        "/v1/workloads/hermes/deployments",
+        json={
+            "target": "local",
+            "status": "applied",
+            "endpoint": "http://hermes:8000",
+        },
+    )
+
+    health = await auth_client.get("/v1/workloads/hermes/health")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "degraded"
+    assert health.json()["reason"] == "runtime is not reachable"
 
 
 async def test_channel_message_creates_session_run_and_audit_record(
