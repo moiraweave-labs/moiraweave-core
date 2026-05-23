@@ -1,0 +1,25 @@
+{{- range $name, $workload := .Values.workloads }}
+{{- if and ($workload.enabled) ($workload.image) ($workload.ports) }}
+{{- $ctx := dict "root" $ "name" $name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "moiraweave.workload.fullname" $ctx }}
+  labels:
+    {{- include "moiraweave.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: workload
+    moiraweave.io/workload: {{ $name }}
+spec:
+  type: {{ default "ClusterIP" $workload.serviceType }}
+  selector:
+    {{- include "moiraweave.workload.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    {{- range $port := $workload.ports }}
+    - name: {{ default "http" $port.name }}
+      port: {{ $port.port }}
+      targetPort: {{ default $port.port $port.targetPort }}
+      protocol: {{ default "TCP" $port.protocol }}
+    {{- end }}
+{{- end }}
+{{- end }}

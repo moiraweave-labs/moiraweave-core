@@ -1,17 +1,10 @@
-"""Single source of truth for Redis Streams topology constants.
+"""Single source of truth for workload runtime Redis keys."""
 
-Both api-gateway (producer) and worker (consumer) import from here to
-guarantee they always agree on consumer group and job key names,
-preventing silent job loss.
-
-Note: each pipeline declares its own trigger stream key in ``pipeline.yaml``
-(``trigger.stream``), so there is no single shared ``STREAM_KEY``.
-"""
+#: Shared dispatch stream.  Redis is now only the queue/coordination layer.
+RUN_STREAM: str = "moiraweave:runs"
 
 #: Consumer group name for the worker fleet.
-#: Must match the value used in ``pipeline_consumer._ensure_consumer_group``.
-CONSUMER_GROUP: str = "moiraweave-pipeline"
+CONSUMER_GROUP: str = "moiraweave-runs"
 
-#: Prefix for per-job Redis Hash keys  (full key: ``f"{JOB_KEY_PREFIX}:{job_id}"``).
-#: Must match the prefix used by both api-gateway (producer) and worker (consumer).
-JOB_KEY_PREFIX: str = "pipeline:job"
+#: Dead-letter stream for malformed or unrecoverable dispatch messages.
+DEAD_LETTER_STREAM: str = "moiraweave:runs:dead-letter"

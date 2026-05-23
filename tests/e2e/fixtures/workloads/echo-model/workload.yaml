@@ -1,0 +1,14 @@
+apiVersion: moiraweave.io/v1alpha1
+kind: Workload
+metadata:
+  name: echo-model
+spec:
+  type: model-service
+  image: local/mock-step:e2e
+  endpoint: http://mock-step:8080/v2/models/echo-model/infer
+  execution:
+    mode: async
+    timeoutSeconds: 60
+  ports:
+    - name: http
+      port: 8080

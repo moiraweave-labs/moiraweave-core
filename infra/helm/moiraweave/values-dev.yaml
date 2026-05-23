@@ -36,30 +36,8 @@ qdrant:
   persistence:
     enabled: false
 
-# vLLM — disabled in kind dev cluster by default (no GPU available).
-# To test the chart rendering with vLLM:
-#   helm template moiraweave infra/helm/moiraweave -f values-dev.yaml --set vllm.enabled=true
-vllm:
-  enabled: false
-  image:
-    pullPolicy: Never   # image loaded via: kind load docker-image vllm/vllm-openai:v0.6.6
-  # Override GPU resources — kind nodes have no GPU device plugin.
-  resources:
-    requests:
-      cpu: "500m"
-      memory: 2Gi
-    limits:
-      cpu: "2000m"
-      memory: 4Gi
-  nodeSelector: {}   # remove GPU node requirement for kind
-  tolerations: []
-  persistence:
-    enabled: false   # avoid PVC dependency in dev
-
 # ---------------------------------------------------------------------------
-# Pipeline steps — dev overrides
+# Workload defaults — dev overrides
 # ---------------------------------------------------------------------------
 modelsCache:
   size: 2Gi
-
-pipelines: {}

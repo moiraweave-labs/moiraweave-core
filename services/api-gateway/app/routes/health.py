@@ -39,6 +39,21 @@ async def ready(request: Request) -> ReadyResponse:
             message=str(exc),
         )
 
+    # Postgres control-plane check
+    t0 = time.monotonic()
+    try:
+        await request.app.state.control_plane.ping()
+        checks["postgres"] = CheckResult(
+            status="ok",
+            latency_ms=round((time.monotonic() - t0) * 1000, 2),
+        )
+    except Exception as exc:  # noqa: BLE001
+        checks["postgres"] = CheckResult(
+            status="error",
+            latency_ms=round((time.monotonic() - t0) * 1000, 2),
+            message=str(exc),
+        )
+
     # Qdrant check
     t0 = time.monotonic()
     try:
@@ -53,8 +68,6 @@ async def ready(request: Request) -> ReadyResponse:
             latency_ms=round((time.monotonic() - t0) * 1000, 2),
             message=str(exc),
         )
-
-    # TODO(F1-6): add Qdrant check
 
     all_ok = all(c.status == "ok" for c in checks.values())
     return ReadyResponse(

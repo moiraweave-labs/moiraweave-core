@@ -22,7 +22,7 @@ spec:
 
 ---
 # 2. API Gateway — accepts inbound HTTP from ingress-nginx only.
-#    Allows outbound to Redis, Qdrant, and DNS.
+#    Allows outbound to Redis, Postgres, Qdrant, and DNS.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -54,6 +54,14 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    # Postgres control-plane store
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
     # Qdrant
     - to:
         - podSelector:
@@ -71,7 +79,7 @@ spec:
 
 ---
 # 3. Worker — accepts inbound metrics scraping from Prometheus only.
-#    Allows outbound to Redis, Qdrant, step pods, and DNS.
+#    Allows outbound to Redis, Postgres, Qdrant, workload pods, and DNS.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -104,6 +112,14 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    # Postgres control-plane store
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
     # Qdrant
     - to:
         - podSelector:
@@ -112,15 +128,12 @@ spec:
       ports:
         - protocol: TCP
           port: 6333
-    # Step inference pods (port 8080 — KServe V2 convention)
+    # Generic workload pods expose arbitrary declared ports.
     - to:
         - podSelector:
             matchLabels:
               {{- include "moiraweave.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: step
-      ports:
-        - protocol: TCP
-          port: 8080
+              app.kubernetes.io/component: workload
     # DNS
     - ports:
         - protocol: UDP
@@ -129,18 +142,18 @@ spec:
           port: 53
 
 ---
-# 4. Step pods — accept inbound from worker only on the inference port.
+# 4. Workload pods — accept inbound from worker only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "moiraweave.fullname" . }}-steps
+  name: {{ include "moiraweave.fullname" . }}-workloads
   labels:
     {{- include "moiraweave.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:
       {{- include "moiraweave.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: step
+      app.kubernetes.io/component: workload
   policyTypes:
     - Ingress
   ingress:
@@ -149,8 +162,44 @@ spec:
             matchLabels:
               {{- include "moiraweave.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: worker
+{{- if .Values.ui.enabled }}
+---
+# 5. UI — accepts HTTP from ingress-nginx and proxies API requests.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "moiraweave.fullname" . }}-ui
+  labels:
+    {{- include "moiraweave.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "moiraweave.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ui
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
       ports:
         - protocol: TCP
-          port: 8080
-
+          port: 80
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "moiraweave.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8000
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}
 {{- end }}

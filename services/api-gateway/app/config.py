@@ -25,11 +25,16 @@ class Settings(BaseSettings):
     rate_limit_default: str = "100/minute"
     rate_limit_auth: str = "10/minute"
 
-    # Redis
+    # Redis — queues and short-lived coordination.
     redis_url: RedisDsn = RedisDsn("redis://redis:6379/0")
-    job_ttl_seconds: int = 3600  # how long job hashes live in Redis
+    run_ttl_seconds: int = 604800
+    job_ttl_seconds: int = 3600
 
-    # Qdrant — vector store for pipeline steps
+    # Control-plane storage. Postgres is the source of truth for workloads,
+    # runs, sessions, events, and artifact metadata.
+    postgres_dsn: str = "postgresql://moiraweave:moiraweave-dev@postgres:5432/moiraweave"
+
+    # Qdrant — vector store for RAG/search workloads
     qdrant_url: AnyHttpUrl = AnyHttpUrl("http://qdrant:6333")
     embedding_model: str = "BAAI/bge-small-en-v1.5"
 
@@ -47,8 +52,9 @@ class Settings(BaseSettings):
     otel_otlp_endpoint: AnyHttpUrl = AnyHttpUrl("http://jaeger:4318")  # OTLP/HTTP
     otel_sample_rate: float = 1.0  # 1.0 = 100%; reduce in high-volume prod
 
-    # Pipeline-as-code — directory containing per-pipeline subdirectories
-    pipelines_dir: str = "pipelines"
+    # Workload manifests and artifact storage.
+    workloads_dir: str = "workloads"
+    artifacts_dir: str = "artifacts"
 
 
 @lru_cache

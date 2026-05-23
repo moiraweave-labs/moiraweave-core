@@ -8,17 +8,20 @@ Environment variables:
     E2E_BASE_URL      API gateway base URL (default: http://localhost:8000)
     E2E_USERNAME      Login username       (default: admin)
     E2E_PASSWORD      Login password       (default: demo-password)
-    E2E_POLL_TIMEOUT  Max seconds to wait for a job to complete (default: 30)
+    E2E_POLL_TIMEOUT  Max seconds to wait for a run to complete (default: 30)
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 _BASE_URL = os.getenv("E2E_BASE_URL", "http://localhost:8000")
 _USERNAME = os.getenv("E2E_USERNAME", "admin")
@@ -65,29 +68,29 @@ async def authed_client(
     return http_client
 
 
-async def poll_job(
+async def poll_run(
     client: httpx.AsyncClient,
-    job_id: str,
+    run_id: str,
     *,
     timeout: int = _POLL_TIMEOUT,
 ) -> dict[str, object]:
-    """Poll ``GET /v1/pipelines/jobs/{job_id}`` until the job leaves *pending*.
+    """Poll ``GET /v1/runs/{run_id}`` until the run reaches a terminal state.
 
     :param client: Authenticated httpx client.
-    :param job_id: Job ID returned by the submit endpoint.
+    :param run_id: Run ID returned by the submit endpoint.
     :param timeout: Maximum seconds to wait before raising TimeoutError.
-    :returns: Final job status dict.
-    :raises TimeoutError: When the job is still pending after *timeout* seconds.
+    :returns: Final run status dict.
+    :raises TimeoutError: When the run is still active after *timeout* seconds.
     """
     deadline = asyncio.get_event_loop().time() + timeout
     while True:
-        resp = await client.get(f"/v1/pipelines/jobs/{job_id}")
+        resp = await client.get(f"/v1/runs/{run_id}")
         resp.raise_for_status()
         data: dict[str, object] = resp.json()
-        if data.get("status") not in ("pending", "processing"):
+        if data.get("status") in ("succeeded", "failed", "canceled", "lost"):
             return data
         if asyncio.get_event_loop().time() >= deadline:
             raise TimeoutError(
-                f"Job {job_id} still pending after {timeout}s. Last status: {data}"
+                f"Run {run_id} still active after {timeout}s. Last status: {data}"
             )
         await asyncio.sleep(0.5)

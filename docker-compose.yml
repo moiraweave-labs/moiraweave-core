@@ -1,12 +1,14 @@
 # MoiraWeave MLOps — local development stack
 #
 # Profiles
-#   (none)           core services: api-gateway, redis, qdrant, jaeger
-#   --profile mlops  + PostgreSQL + MLflow tracking server
+#   (none)           core services: api-gateway, worker, postgres, redis, qdrant, jaeger
+#   --profile ui     + Ops dashboard
+#   --profile mlops  + MLflow tracking server
 #
 # Quick start:
 #   cp .env.example .env        # fill in JWT_SECRET_KEY
 #   docker compose up -d        # core only
+#   docker compose --profile ui up -d
 #   docker compose --profile mlops up -d   # core + mlops
 #
 # Override any port in .env, e.g. REDIS_PORT=6380
@@ -31,17 +33,23 @@ services:
       OTEL_SERVICE_NAME: "api-gateway"
       OTEL_OTLP_ENDPOINT: "http://jaeger:4318"
       OTEL_SAMPLE_RATE: "1.0"
-      # Redis (rate-limit store + job queue)
+      # Redis (queues and short-lived coordination)
       REDIS_URL: "redis://redis:6379/0"
-      # Qdrant (vector store — pipeline steps)
+      POSTGRES_DSN: "postgresql://${POSTGRES_USER:-moiraweave}:${POSTGRES_PASSWORD:-moiraweave-dev}@postgres:5432/${POSTGRES_DB:-moiraweave}"
+      WORKLOADS_DIR: "/workspace/workloads"
+      ARTIFACTS_DIR: "/workspace/artifacts"
+      # Qdrant (vector store)
       QDRANT_URL: "http://qdrant:6333"
       EMBEDDING_MODEL: "BAAI/bge-small-en-v1.5"
-      PIPELINES_DIR: "/workspace/pipelines"
       FASTEMBED_CACHE_PATH: "/app/.models"
     volumes:
       - fastembed_models:/app/.models
+      - ./workloads:/workspace/workloads:ro
+      - ./artifacts:/workspace/artifacts
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       qdrant:
         condition: service_healthy
@@ -52,24 +60,31 @@ services:
       - moiraweave-net
 
   # ── Worker ─────────────────────────────────────────────────────────────────
-  # Async Redis Streams consumer — processes pipeline jobs
+  # Async Redis Streams consumer — processes workload runs
   worker:
     build:
       context: .
       dockerfile: services/worker/Dockerfile
     environment:
       REDIS_URL: "redis://redis:6379/0"
+      POSTGRES_DSN: "postgresql://${POSTGRES_USER:-moiraweave}:${POSTGRES_PASSWORD:-moiraweave-dev}@postgres:5432/${POSTGRES_DB:-moiraweave}"
       LOG_LEVEL: "INFO"
-      PIPELINES_DIR: "/workspace/pipelines"
+      WORKLOADS_DIR: "/workspace/workloads"
+      ARTIFACTS_DIR: "/workspace/artifacts"
+    volumes:
+      - ./workloads:/workspace/workloads:ro
+      - ./artifacts:/workspace/artifacts
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - moiraweave-net
 
   # ── Redis ───────────────────────────────────────────────────────────────────
-  # Rate-limit storage (slowapi) + async job queue (Redis Streams, F1-5)
+  # Rate-limit storage + async run queue (Redis Streams)
   redis:
     image: redis:7-alpine
     ports:
@@ -86,7 +101,7 @@ services:
       - moiraweave-net
 
   # ── Qdrant ──────────────────────────────────────────────────────────────────
-  # Vector DB for RAG pipeline (F1-6)
+  # Vector DB for RAG workloads
   qdrant:
     image: qdrant/qdrant:v1.13.0
     ports:
@@ -118,21 +133,37 @@ services:
     networks:
       - moiraweave-net
 
-  # ── PostgreSQL (mlops profile) ──────────────────────────────────────────────
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    profiles: [mlops]
     environment:
-      POSTGRES_DB: mlflow
-      POSTGRES_USER: mlflow
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-mlflow-dev}"
+      POSTGRES_DB: "${POSTGRES_DB:-moiraweave}"
+      POSTGRES_USER: "${POSTGRES_USER:-moiraweave}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-moiraweave-dev}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-moiraweave} -d ${POSTGRES_DB:-moiraweave}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    networks:
+      - moiraweave-net
+
+  # ── Ops dashboard (ui profile) ───────────────────────────────────────────────
+  ui:
+    build:
+      context: ../moiraweave-ui
+    profiles: [ui]
+    ports:
+      - "${MOIRAWEAVE_UI_PORT:-3000}:80"
+    environment:
+      VITE_API_BASE_URL: "http://localhost:${API_GATEWAY_PORT:-8000}"
+      API_PROXY_PASS: "http://api-gateway:8000"
+    depends_on:
+      api-gateway:
+        condition: service_started
     restart: unless-stopped
     networks:
       - moiraweave-net
@@ -148,7 +179,7 @@ services:
       mlflow server
       --host 0.0.0.0
       --port 5000
-      --backend-store-uri postgresql://mlflow:${POSTGRES_PASSWORD:-mlflow-dev}@postgres:5432/mlflow
+      --backend-store-uri postgresql://${POSTGRES_USER:-moiraweave}:${POSTGRES_PASSWORD:-moiraweave-dev}@postgres:5432/${POSTGRES_DB:-moiraweave}
       --default-artifact-root /mlflow/artifacts
     volumes:
       - mlflow_artifacts:/mlflow/artifacts

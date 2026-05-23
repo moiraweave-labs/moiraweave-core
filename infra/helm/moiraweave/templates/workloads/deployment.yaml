@@ -1,0 +1,122 @@
+{{- range $name, $workload := .Values.workloads }}
+{{- if and ($workload.enabled) ($workload.image) }}
+{{- $ctx := dict "root" $ "name" $name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "moiraweave.workload.fullname" $ctx }}
+  labels:
+    {{- include "moiraweave.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: workload
+    moiraweave.io/workload: {{ $name }}
+    moiraweave.io/workload-type: {{ $workload.type | quote }}
+spec:
+  replicas: {{ default 1 $workload.replicas }}
+  selector:
+    matchLabels:
+      {{- include "moiraweave.workload.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "moiraweave.workload.selectorLabels" $ctx | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "moiraweave.serviceAccountName" $ }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: workload
+          image: {{ $workload.image | quote }}
+          imagePullPolicy: {{ default "IfNotPresent" $workload.imagePullPolicy }}
+          {{- if $workload.command }}
+          command:
+            {{- toYaml $workload.command | nindent 12 }}
+          {{- end }}
+          {{- if $workload.args }}
+          args:
+            {{- toYaml $workload.args | nindent 12 }}
+          {{- end }}
+          {{- if $workload.ports }}
+          ports:
+            {{- range $port := $workload.ports }}
+            - name: {{ default "http" $port.name }}
+              containerPort: {{ default $port.port $port.targetPort }}
+              protocol: {{ default "TCP" $port.protocol }}
+            {{- end }}
+          {{- end }}
+          env:
+            {{- range $key, $value := $workload.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- range $secret := $workload.secrets }}
+            - name: {{ $secret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default $.Values.apiGateway.existingSecret $workload.existingSecret }}
+                  key: {{ $secret }}
+            {{- end }}
+            {{- if $workload.agent }}
+            {{- range $secret := $workload.agent.requiredSecrets }}
+            - name: {{ $secret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default $.Values.apiGateway.existingSecret $workload.existingSecret }}
+                  key: {{ $secret }}
+            {{- end }}
+            {{- end }}
+            - name: MOIRAWEAVE_WORKLOAD_NAME
+              value: {{ $name | quote }}
+            - name: REDIS_URL
+              value: {{ include "moiraweave.redisUrl" $ | quote }}
+            - name: QDRANT_URL
+              value: {{ include "moiraweave.qdrantUrl" $ | quote }}
+          {{- if or (and $workload.persistence $workload.persistence.enabled $workload.persistence.mountPath) (and $workload.agent $workload.agent.workspaceMount) }}
+          volumeMounts:
+            {{- if and $workload.persistence $workload.persistence.enabled $workload.persistence.mountPath }}
+            - name: data
+              mountPath: {{ $workload.persistence.mountPath | quote }}
+            {{- end }}
+            {{- if and $workload.agent $workload.agent.workspaceMount }}
+            - name: data
+              mountPath: {{ $workload.agent.workspaceMount | quote }}
+              subPath: workspace
+            {{- end }}
+          {{- end }}
+          {{- if $workload.livenessProbe }}
+          livenessProbe:
+            {{- toYaml $workload.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if $workload.readinessProbe }}
+          readinessProbe:
+            {{- toYaml $workload.readinessProbe | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- if $workload.resources }}
+            {{- toYaml $workload.resources | nindent 12 }}
+            {{- else }}
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            {{- end }}
+      {{- if or (and $workload.persistence $workload.persistence.enabled $workload.persistence.mountPath) (and $workload.agent $workload.agent.workspaceMount) }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "moiraweave.workload.fullname" $ctx }}-data
+      {{- end }}
+      {{- if $workload.nodeSelector }}
+      nodeSelector:
+        {{- toYaml $workload.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if $workload.tolerations }}
+      tolerations:
+        {{- toYaml $workload.tolerations | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}

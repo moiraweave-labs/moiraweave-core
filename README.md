@@ -7,7 +7,8 @@
 [![Docs](https://img.shields.io/badge/docs-live-blue)](https://moiraweave-labs.github.io/moiraweave-docs/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](pyproject.toml)
 
-Runtime and infrastructure repository for the MoiraWeave platform.
+Runtime and infrastructure repository for the MoiraWeave self-hosted AI
+workload and agent operations platform.
 
 ## Scope
 
@@ -22,10 +23,15 @@ This repository owns platform runtime capabilities, not customer business logic.
 
 ### Excluded
 
-- customer pipelines
-- customer custom steps
+- customer workload manifests
+- customer agent/model internals
 - customer environment overlays and secrets
 - step-specific model services in the base runtime compose profile
+
+MoiraWeave manages the control plane around agents: deployment, sessions,
+messages, runs, events, cancellation, health, and artifacts. Agent runtimes such
+as Hermes, OpenClaw, or LangGraph keep their own reasoning loop, memory, tools,
+and configuration semantics.
 
 ## For platform users
 
@@ -34,8 +40,9 @@ You usually do not need to clone this repository directly.
 Use the CLI instead:
 
 1. `uv tool install moiraweave-cli`
-2. `moira project init`
-3. Author pipelines and steps in your workspace
+2. `moira init`
+3. Author `workload.yaml` manifests in `.moiraweave/workloads/`
+4. Deploy local or Kubernetes workloads with `moira deploy local|k8s`
 
 ## Local development
 
@@ -52,11 +59,11 @@ make ci
 
 ## Repository model
 
-`docker-compose.yml` is intentionally generic. Step-specific runtime dependencies should be configured in the user workspace, not embedded in core.
+`docker-compose.yml` is intentionally generic. Workload-specific runtimes should be configured in the user workspace, not embedded in core.
 
 ## Related repositories
 
 - [moiraweave-cli](https://github.com/moiraweave-labs/moiraweave-cli): user-facing CLI
-- [moiraweave-steps](https://github.com/moiraweave-labs/moiraweave-steps): official step catalog
+- [moiraweave-ui](https://github.com/moiraweave-labs/moiraweave-ui): optional Ops dashboard
 - [moiraweave-docs](https://github.com/moiraweave-labs/moiraweave-docs): public documentation
 - [.github](https://github.com/moiraweave-labs/.github): org-wide standards

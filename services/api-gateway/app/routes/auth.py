@@ -1,9 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from hmac import compare_digest
-from typing import Annotated
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from app.config import Settings, get_settings
 from app.middleware.rate_limit import limiter
@@ -38,7 +37,6 @@ def _create_access_token(subject: str, settings: Settings) -> str:
 async def login(
     request: Request,
     body: LoginRequest,
-    settings: Annotated[Settings, Depends(get_settings)],
 ) -> Token:
     """Authenticate and return a signed JWT.
 
@@ -46,6 +44,8 @@ async def login(
     Override ``DEMO_USERNAME`` and ``DEMO_PASSWORD`` via environment variables.
     Replace with a database-backed user store for production.
     """
+    del request
+    settings = get_settings()
     if body.username != settings.demo_username or not _verify_password(
         body.password, settings.demo_password.get_secret_value()
     ):

@@ -1,0 +1,1324 @@
+"""Control-plane storage abstractions for workloads, runs, sessions, and events."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Protocol
+
+from pydantic import BaseModel, Field
+
+from moiraweave_shared.workloads import WorkloadDefinition
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
+
+HEARTBEAT_RUN_STATUSES = {"starting", "running", "cancelling"}
+
+CONTROL_PLANE_MIGRATIONS: tuple[tuple[int, str], ...] = (
+    (
+        1,
+        """
+        CREATE TABLE IF NOT EXISTS workloads (
+            name text PRIMARY KEY,
+            manifest jsonb NOT NULL,
+            user_subject text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS runs (
+            run_id uuid PRIMARY KEY,
+            workload_name text NOT NULL,
+            user_subject text NOT NULL,
+            status text NOT NULL,
+            payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+            result jsonb,
+            error text,
+            session_id uuid,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz,
+            heartbeat_at timestamptz,
+            completed_at timestamptz
+        );
+
+        CREATE INDEX IF NOT EXISTS runs_user_created_idx
+            ON runs (user_subject, created_at DESC);
+        CREATE INDEX IF NOT EXISTS runs_status_heartbeat_idx
+            ON runs (status, heartbeat_at);
+
+        CREATE TABLE IF NOT EXISTS run_events (
+            id bigserial PRIMARY KEY,
+            run_id uuid NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+            timestamp timestamptz NOT NULL DEFAULT now(),
+            type text NOT NULL,
+            message text NOT NULL,
+            data jsonb NOT NULL DEFAULT '{}'::jsonb
+        );
+
+        CREATE TABLE IF NOT EXISTS artifacts (
+            id text PRIMARY KEY,
+            run_id uuid NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+            name text NOT NULL,
+            uri text NOT NULL,
+            content_type text,
+            size_bytes bigint,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_sessions (
+            session_id uuid PRIMARY KEY,
+            agent_name text NOT NULL,
+            user_subject text NOT NULL,
+            status text NOT NULL,
+            metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz
+        );
+
+        CREATE INDEX IF NOT EXISTS agent_sessions_user_created_idx
+            ON agent_sessions (user_subject, agent_name, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS agent_messages (
+            id bigserial PRIMARY KEY,
+            session_id uuid NOT NULL
+                REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+            role text NOT NULL,
+            message text NOT NULL,
+            context jsonb NOT NULL DEFAULT '{}'::jsonb,
+            created_at timestamptz NOT NULL DEFAULT now()
+        );
+        """,
+    ),
+    (
+        2,
+        """
+        CREATE TABLE IF NOT EXISTS deployments (
+            deployment_id uuid PRIMARY KEY,
+            workload_name text NOT NULL,
+            target text NOT NULL,
+            status text NOT NULL,
+            endpoint text,
+            user_subject text NOT NULL,
+            metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (workload_name, target, user_subject)
+        );
+
+        CREATE INDEX IF NOT EXISTS deployments_user_workload_idx
+            ON deployments (user_subject, workload_name, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS channel_messages (
+            id bigserial PRIMARY KEY,
+            channel text NOT NULL,
+            agent_name text NOT NULL,
+            external_user_id text NOT NULL,
+            session_id uuid NOT NULL
+                REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+            run_id uuid REFERENCES runs(run_id) ON DELETE SET NULL,
+            direction text NOT NULL,
+            message text NOT NULL,
+            user_subject text NOT NULL,
+            metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+            created_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS channel_messages_session_idx
+            ON channel_messages (session_id, created_at ASC);
+        """,
+    ),
+)
+
+
+def utc_now_iso() -> str:
+    """Return an ISO-8601 UTC timestamp."""
+
+    return datetime.now(UTC).isoformat()
+
+
+def _iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _json_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return value
+
+
+def _json_dict(value: Any) -> dict[str, Any] | None:
+    parsed = _json_value(value)
+    return parsed if isinstance(parsed, dict) else None
+
+
+class StoredRun(BaseModel):
+    run_id: str
+    workload_name: str
+    status: str
+    user: str
+    created_at: str
+    updated_at: str | None = None
+    heartbeat_at: str | None = None
+    completed_at: str | None = None
+    session_id: str | None = None
+    payload: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class StoredRunEvent(BaseModel):
+    id: str
+    run_id: str
+    timestamp: str
+    type: str
+    message: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class StoredArtifact(BaseModel):
+    id: str
+    run_id: str
+    name: str
+    uri: str
+    content_type: str | None = None
+    size_bytes: int | None = None
+    created_at: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StoredAgentSession(BaseModel):
+    session_id: str
+    agent_name: str
+    status: str
+    user: str
+    created_at: str
+    updated_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StoredAgentMessage(BaseModel):
+    message_id: str
+    session_id: str
+    role: str
+    message: str
+    context: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class StoredDeployment(BaseModel):
+    deployment_id: str
+    workload_name: str
+    target: str
+    status: str
+    user: str
+    created_at: str
+    updated_at: str | None = None
+    endpoint: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StoredChannelMessage(BaseModel):
+    message_id: str
+    channel: str
+    agent_name: str
+    external_user_id: str
+    session_id: str
+    run_id: str | None
+    direction: str
+    message: str
+    user: str
+    created_at: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ControlPlaneRepository(Protocol):
+    async def init(self) -> None: ...
+
+    async def ping(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+    async def upsert_workload(
+        self, workload: WorkloadDefinition, user: str, *, now: str | None = None
+    ) -> None: ...
+
+    async def list_workloads(self) -> list[WorkloadDefinition]: ...
+
+    async def get_workload(self, name: str) -> WorkloadDefinition | None: ...
+
+    async def create_run(
+        self,
+        run_id: str,
+        workload_name: str,
+        payload: dict[str, Any],
+        user: str,
+        *,
+        created_at: str,
+        session_id: str | None = None,
+    ) -> StoredRun: ...
+
+    async def list_runs(
+        self,
+        user: str,
+        *,
+        workload_name: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[StoredRun]: ...
+
+    async def get_run(self, run_id: str) -> StoredRun | None: ...
+
+    async def update_run(
+        self,
+        run_id: str,
+        *,
+        status: str | None = None,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        heartbeat_at: str | None = None,
+        completed_at: str | None = None,
+        updated_at: str | None = None,
+    ) -> StoredRun | None: ...
+
+    async def append_run_event(
+        self,
+        run_id: str,
+        event_type: str,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+        timestamp: str | None = None,
+    ) -> StoredRunEvent: ...
+
+    async def list_run_events(self, run_id: str) -> list[StoredRunEvent]: ...
+
+    async def record_artifact(
+        self,
+        run_id: str,
+        artifact: dict[str, Any],
+        *,
+        fallback_index: int = 0,
+    ) -> StoredArtifact: ...
+
+    async def list_artifacts(self, run_id: str) -> list[StoredArtifact]: ...
+
+    async def create_agent_session(
+        self,
+        session_id: str,
+        agent_name: str,
+        user: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> StoredAgentSession: ...
+
+    async def get_agent_session(
+        self, session_id: str
+    ) -> StoredAgentSession | None: ...
+
+    async def list_agent_sessions(
+        self, agent_name: str, user: str
+    ) -> list[StoredAgentSession]: ...
+
+    async def append_agent_message(
+        self,
+        session_id: str,
+        role: str,
+        message: str,
+        *,
+        context: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> StoredAgentMessage: ...
+
+    async def list_agent_messages(self, session_id: str) -> list[StoredAgentMessage]: ...
+
+    async def upsert_deployment(
+        self,
+        deployment_id: str,
+        workload_name: str,
+        target: str,
+        status: str,
+        user: str,
+        *,
+        endpoint: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        now: str | None = None,
+    ) -> StoredDeployment: ...
+
+    async def list_deployments(
+        self, user: str, *, workload_name: str | None = None
+    ) -> list[StoredDeployment]: ...
+
+    async def get_deployment(self, deployment_id: str) -> StoredDeployment | None: ...
+
+    async def record_channel_message(
+        self,
+        channel: str,
+        agent_name: str,
+        external_user_id: str,
+        session_id: str,
+        direction: str,
+        message: str,
+        user: str,
+        *,
+        run_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> StoredChannelMessage: ...
+
+    async def find_stale_runs(
+        self, *, before: str, statuses: Iterable[str] = HEARTBEAT_RUN_STATUSES
+    ) -> list[StoredRun]: ...
+
+
+class InMemoryControlPlaneRepository:
+    """Small async repository for tests and local unit-level usage."""
+
+    def __init__(self) -> None:
+        self.workloads: dict[str, WorkloadDefinition] = {}
+        self.runs: dict[str, StoredRun] = {}
+        self.events: dict[str, list[StoredRunEvent]] = {}
+        self.artifacts: dict[str, list[StoredArtifact]] = {}
+        self.sessions: dict[str, StoredAgentSession] = {}
+        self.messages: dict[str, list[StoredAgentMessage]] = {}
+        self.deployments: dict[str, StoredDeployment] = {}
+        self.channel_messages: list[StoredChannelMessage] = []
+        self._event_id = 0
+        self._message_id = 0
+        self._channel_message_id = 0
+
+    async def init(self) -> None:
+        return None
+
+    async def ping(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    async def upsert_workload(
+        self, workload: WorkloadDefinition, user: str, *, now: str | None = None
+    ) -> None:
+        del user, now
+        self.workloads[workload.metadata.name] = workload
+
+    async def list_workloads(self) -> list[WorkloadDefinition]:
+        return list(self.workloads.values())
+
+    async def get_workload(self, name: str) -> WorkloadDefinition | None:
+        return self.workloads.get(name)
+
+    async def create_run(
+        self,
+        run_id: str,
+        workload_name: str,
+        payload: dict[str, Any],
+        user: str,
+        *,
+        created_at: str,
+        session_id: str | None = None,
+    ) -> StoredRun:
+        run = StoredRun(
+            run_id=run_id,
+            workload_name=workload_name,
+            status="queued",
+            user=user,
+            created_at=created_at,
+            updated_at=created_at,
+            payload=payload,
+            session_id=session_id,
+        )
+        self.runs[run_id] = run
+        return run
+
+    async def list_runs(
+        self,
+        user: str,
+        *,
+        workload_name: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[StoredRun]:
+        runs = [
+            run
+            for run in self.runs.values()
+            if run.user == user
+            and (workload_name is None or run.workload_name == workload_name)
+        ]
+        sorted_runs = sorted(runs, key=lambda run: run.created_at, reverse=True)
+        return sorted_runs[offset : offset + limit]
+
+    async def get_run(self, run_id: str) -> StoredRun | None:
+        return self.runs.get(run_id)
+
+    async def update_run(
+        self,
+        run_id: str,
+        *,
+        status: str | None = None,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        heartbeat_at: str | None = None,
+        completed_at: str | None = None,
+        updated_at: str | None = None,
+    ) -> StoredRun | None:
+        run = self.runs.get(run_id)
+        if run is None:
+            return None
+        data = run.model_dump()
+        if status is not None:
+            data["status"] = status
+        if result is not None:
+            data["result"] = result
+        if error is not None:
+            data["error"] = error
+        if heartbeat_at is not None:
+            data["heartbeat_at"] = heartbeat_at
+        if completed_at is not None:
+            data["completed_at"] = completed_at
+        data["updated_at"] = updated_at or utc_now_iso()
+        updated = StoredRun.model_validate(data)
+        self.runs[run_id] = updated
+        return updated
+
+    async def append_run_event(
+        self,
+        run_id: str,
+        event_type: str,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+        timestamp: str | None = None,
+    ) -> StoredRunEvent:
+        self._event_id += 1
+        event = StoredRunEvent(
+            id=str(self._event_id),
+            run_id=run_id,
+            timestamp=timestamp or utc_now_iso(),
+            type=event_type,
+            message=message,
+            data=data or {},
+        )
+        self.events.setdefault(run_id, []).append(event)
+        return event
+
+    async def list_run_events(self, run_id: str) -> list[StoredRunEvent]:
+        return list(self.events.get(run_id, []))
+
+    async def record_artifact(
+        self,
+        run_id: str,
+        artifact: dict[str, Any],
+        *,
+        fallback_index: int = 0,
+    ) -> StoredArtifact:
+        item = _artifact_from_dict(run_id, artifact, fallback_index)
+        bucket = self.artifacts.setdefault(run_id, [])
+        bucket[:] = [existing for existing in bucket if existing.id != item.id]
+        bucket.append(item)
+        return item
+
+    async def list_artifacts(self, run_id: str) -> list[StoredArtifact]:
+        return list(self.artifacts.get(run_id, []))
+
+    async def create_agent_session(
+        self,
+        session_id: str,
+        agent_name: str,
+        user: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> StoredAgentSession:
+        session = StoredAgentSession(
+            session_id=session_id,
+            agent_name=agent_name,
+            status="active",
+            user=user,
+            created_at=created_at,
+            updated_at=created_at,
+            metadata=metadata or {},
+        )
+        self.sessions[session_id] = session
+        return session
+
+    async def get_agent_session(
+        self, session_id: str
+    ) -> StoredAgentSession | None:
+        return self.sessions.get(session_id)
+
+    async def list_agent_sessions(
+        self, agent_name: str, user: str
+    ) -> list[StoredAgentSession]:
+        sessions = [
+            session
+            for session in self.sessions.values()
+            if session.agent_name == agent_name and session.user == user
+        ]
+        return sorted(sessions, key=lambda session: session.created_at, reverse=True)
+
+    async def append_agent_message(
+        self,
+        session_id: str,
+        role: str,
+        message: str,
+        *,
+        context: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> StoredAgentMessage:
+        self._message_id += 1
+        stored = StoredAgentMessage(
+            message_id=str(self._message_id),
+            session_id=session_id,
+            role=role,
+            message=message,
+            context=context or {},
+            created_at=created_at,
+        )
+        self.messages.setdefault(session_id, []).append(stored)
+        return stored
+
+    async def list_agent_messages(self, session_id: str) -> list[StoredAgentMessage]:
+        return list(self.messages.get(session_id, []))
+
+    async def upsert_deployment(
+        self,
+        deployment_id: str,
+        workload_name: str,
+        target: str,
+        status: str,
+        user: str,
+        *,
+        endpoint: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        now: str | None = None,
+    ) -> StoredDeployment:
+        timestamp = now or utc_now_iso()
+        existing = next(
+            (
+                item
+                for item in self.deployments.values()
+                if item.workload_name == workload_name
+                and item.target == target
+                and item.user == user
+            ),
+            None,
+        )
+        deployment = StoredDeployment(
+            deployment_id=existing.deployment_id if existing else deployment_id,
+            workload_name=workload_name,
+            target=target,
+            status=status,
+            user=user,
+            endpoint=endpoint,
+            metadata=metadata or {},
+            created_at=existing.created_at if existing else timestamp,
+            updated_at=timestamp,
+        )
+        self.deployments[deployment.deployment_id] = deployment
+        return deployment
+
+    async def list_deployments(
+        self, user: str, *, workload_name: str | None = None
+    ) -> list[StoredDeployment]:
+        deployments = [
+            deployment
+            for deployment in self.deployments.values()
+            if deployment.user == user
+            and (workload_name is None or deployment.workload_name == workload_name)
+        ]
+        return sorted(deployments, key=lambda item: item.updated_at or "", reverse=True)
+
+    async def get_deployment(self, deployment_id: str) -> StoredDeployment | None:
+        return self.deployments.get(deployment_id)
+
+    async def record_channel_message(
+        self,
+        channel: str,
+        agent_name: str,
+        external_user_id: str,
+        session_id: str,
+        direction: str,
+        message: str,
+        user: str,
+        *,
+        run_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> StoredChannelMessage:
+        self._channel_message_id += 1
+        stored = StoredChannelMessage(
+            message_id=str(self._channel_message_id),
+            channel=channel,
+            agent_name=agent_name,
+            external_user_id=external_user_id,
+            session_id=session_id,
+            run_id=run_id,
+            direction=direction,
+            message=message,
+            user=user,
+            metadata=metadata or {},
+            created_at=created_at,
+        )
+        self.channel_messages.append(stored)
+        return stored
+
+    async def find_stale_runs(
+        self, *, before: str, statuses: Iterable[str] = HEARTBEAT_RUN_STATUSES
+    ) -> list[StoredRun]:
+        status_set = set(statuses)
+        threshold = datetime.fromisoformat(before)
+        stale: list[StoredRun] = []
+        for run in self.runs.values():
+            if run.status not in status_set:
+                continue
+            heartbeat_raw = run.heartbeat_at or run.updated_at or run.created_at
+            heartbeat = datetime.fromisoformat(heartbeat_raw)
+            if heartbeat < threshold:
+                stale.append(run)
+        return stale
+
+
+class PostgresControlPlaneRepository:
+    """Postgres-backed control-plane repository.
+
+    The class accepts an asyncpg pool but keeps the import lazy so tests can use
+    the in-memory repository without requiring a live Postgres dependency.
+    """
+
+    def __init__(self, pool: Any) -> None:
+        self.pool = pool
+
+    async def init(self) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS control_plane_migrations (
+                    version integer PRIMARY KEY,
+                    applied_at timestamptz NOT NULL DEFAULT now()
+                );
+                """
+            )
+            applied_rows = await conn.fetch(
+                "SELECT version FROM control_plane_migrations"
+            )
+            applied = {int(row["version"]) for row in applied_rows}
+            for version, sql in CONTROL_PLANE_MIGRATIONS:
+                if version in applied:
+                    continue
+                async with conn.transaction():
+                    await conn.execute(sql)
+                    await conn.execute(
+                        """
+                        INSERT INTO control_plane_migrations (version)
+                        VALUES ($1)
+                        ON CONFLICT (version) DO NOTHING
+                        """,
+                        version,
+                    )
+
+    async def close(self) -> None:
+        await self.pool.close()
+
+    async def ping(self) -> None:
+        await self.pool.execute("SELECT 1")
+
+    async def upsert_workload(
+        self, workload: WorkloadDefinition, user: str, *, now: str | None = None
+    ) -> None:
+        now = now or utc_now_iso()
+        await self.pool.execute(
+            """
+            INSERT INTO workloads (name, manifest, user_subject, created_at, updated_at)
+            VALUES ($1, $2::jsonb, $3, $4::timestamptz, $4::timestamptz)
+            ON CONFLICT (name) DO UPDATE SET
+                manifest = EXCLUDED.manifest,
+                user_subject = EXCLUDED.user_subject,
+                updated_at = EXCLUDED.updated_at
+            """,
+            workload.metadata.name,
+            json.dumps(workload.to_manifest()),
+            user,
+            now,
+        )
+
+    async def list_workloads(self) -> list[WorkloadDefinition]:
+        rows = await self.pool.fetch(
+            "SELECT manifest FROM workloads ORDER BY name ASC"
+        )
+        return [
+            WorkloadDefinition.model_validate(_json_dict(row["manifest"]))
+            for row in rows
+            if _json_dict(row["manifest"]) is not None
+        ]
+
+    async def get_workload(self, name: str) -> WorkloadDefinition | None:
+        row = await self.pool.fetchrow(
+            "SELECT manifest FROM workloads WHERE name = $1", name
+        )
+        if row is None:
+            return None
+        manifest = _json_dict(row["manifest"])
+        return WorkloadDefinition.model_validate(manifest) if manifest else None
+
+    async def create_run(
+        self,
+        run_id: str,
+        workload_name: str,
+        payload: dict[str, Any],
+        user: str,
+        *,
+        created_at: str,
+        session_id: str | None = None,
+    ) -> StoredRun:
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO runs (
+                run_id, workload_name, user_subject, status, payload, session_id,
+                created_at, updated_at
+            )
+            VALUES (
+                $1::uuid, $2, $3, 'queued', $4::jsonb, $5::uuid,
+                $6::timestamptz, $6::timestamptz
+            )
+            RETURNING run_id::text, workload_name, user_subject, status, payload,
+                result, error, session_id::text, created_at, updated_at,
+                heartbeat_at, completed_at
+            """,
+            run_id,
+            workload_name,
+            user,
+            json.dumps(payload),
+            session_id,
+            created_at,
+        )
+        return _run_from_row(row)
+
+    async def list_runs(
+        self,
+        user: str,
+        *,
+        workload_name: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[StoredRun]:
+        rows = await self.pool.fetch(
+            """
+            SELECT run_id::text, workload_name, user_subject, status, payload,
+                result, error, session_id::text, created_at, updated_at,
+                heartbeat_at, completed_at
+            FROM runs
+            WHERE user_subject = $1
+                AND ($2::text IS NULL OR workload_name = $2)
+            ORDER BY created_at DESC
+            LIMIT $3
+            OFFSET $4
+            """,
+            user,
+            workload_name,
+            limit,
+            offset,
+        )
+        return [_run_from_row(row) for row in rows]
+
+    async def get_run(self, run_id: str) -> StoredRun | None:
+        row = await self.pool.fetchrow(
+            """
+            SELECT run_id::text, workload_name, user_subject, status, payload,
+                result, error, session_id::text, created_at, updated_at,
+                heartbeat_at, completed_at
+            FROM runs
+            WHERE run_id = $1::uuid
+            """,
+            run_id,
+        )
+        return _run_from_row(row) if row else None
+
+    async def update_run(
+        self,
+        run_id: str,
+        *,
+        status: str | None = None,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        heartbeat_at: str | None = None,
+        completed_at: str | None = None,
+        updated_at: str | None = None,
+    ) -> StoredRun | None:
+        fields: list[str] = []
+        args: list[Any] = [run_id]
+
+        def add(column: str, value: Any, cast: str = "") -> None:
+            args.append(value)
+            fields.append(f"{column} = ${len(args)}{cast}")
+
+        if status is not None:
+            add("status", status)
+        if result is not None:
+            add("result", json.dumps(result), "::jsonb")
+        if error is not None:
+            add("error", error)
+        if heartbeat_at is not None:
+            add("heartbeat_at", heartbeat_at, "::timestamptz")
+        if completed_at is not None:
+            add("completed_at", completed_at, "::timestamptz")
+        add("updated_at", updated_at or utc_now_iso(), "::timestamptz")
+
+        row = await self.pool.fetchrow(
+            f"""
+            UPDATE runs
+            SET {", ".join(fields)}
+            WHERE run_id = $1::uuid
+            RETURNING run_id::text, workload_name, user_subject, status, payload,
+                result, error, session_id::text, created_at, updated_at,
+                heartbeat_at, completed_at
+            """,
+            *args,
+        )
+        return _run_from_row(row) if row else None
+
+    async def append_run_event(
+        self,
+        run_id: str,
+        event_type: str,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+        timestamp: str | None = None,
+    ) -> StoredRunEvent:
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO run_events (run_id, timestamp, type, message, data)
+            VALUES ($1::uuid, $2::timestamptz, $3, $4, $5::jsonb)
+            RETURNING id::text, run_id::text, timestamp, type, message, data
+            """,
+            run_id,
+            timestamp or utc_now_iso(),
+            event_type,
+            message,
+            json.dumps(data or {}),
+        )
+        return _event_from_row(row)
+
+    async def list_run_events(self, run_id: str) -> list[StoredRunEvent]:
+        rows = await self.pool.fetch(
+            """
+            SELECT id::text, run_id::text, timestamp, type, message, data
+            FROM run_events
+            WHERE run_id = $1::uuid
+            ORDER BY id ASC
+            """,
+            run_id,
+        )
+        return [_event_from_row(row) for row in rows]
+
+    async def record_artifact(
+        self,
+        run_id: str,
+        artifact: dict[str, Any],
+        *,
+        fallback_index: int = 0,
+    ) -> StoredArtifact:
+        item = _artifact_from_dict(run_id, artifact, fallback_index)
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO artifacts (
+                id, run_id, name, uri, content_type, size_bytes, created_at, metadata
+            )
+            VALUES (
+                $1, $2::uuid, $3, $4, $5, $6, $7::timestamptz, $8::jsonb
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                uri = EXCLUDED.uri,
+                content_type = EXCLUDED.content_type,
+                size_bytes = EXCLUDED.size_bytes,
+                metadata = EXCLUDED.metadata
+            RETURNING id, run_id::text, name, uri, content_type, size_bytes,
+                created_at, metadata
+            """,
+            item.id,
+            item.run_id,
+            item.name,
+            item.uri,
+            item.content_type,
+            item.size_bytes,
+            item.created_at,
+            json.dumps(item.metadata),
+        )
+        return _artifact_from_row(row)
+
+    async def list_artifacts(self, run_id: str) -> list[StoredArtifact]:
+        rows = await self.pool.fetch(
+            """
+            SELECT id, run_id::text, name, uri, content_type, size_bytes,
+                created_at, metadata
+            FROM artifacts
+            WHERE run_id = $1::uuid
+            ORDER BY created_at ASC, id ASC
+            """,
+            run_id,
+        )
+        return [_artifact_from_row(row) for row in rows]
+
+    async def create_agent_session(
+        self,
+        session_id: str,
+        agent_name: str,
+        user: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> StoredAgentSession:
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO agent_sessions (
+                session_id, agent_name, user_subject, status, metadata,
+                created_at, updated_at
+            )
+            VALUES (
+                $1::uuid, $2, $3, 'active', $4::jsonb,
+                $5::timestamptz, $5::timestamptz
+            )
+            RETURNING session_id::text, agent_name, user_subject, status,
+                metadata, created_at, updated_at
+            """,
+            session_id,
+            agent_name,
+            user,
+            json.dumps(metadata or {}),
+            created_at,
+        )
+        return _session_from_row(row)
+
+    async def get_agent_session(
+        self, session_id: str
+    ) -> StoredAgentSession | None:
+        row = await self.pool.fetchrow(
+            """
+            SELECT session_id::text, agent_name, user_subject, status,
+                metadata, created_at, updated_at
+            FROM agent_sessions
+            WHERE session_id = $1::uuid
+            """,
+            session_id,
+        )
+        return _session_from_row(row) if row else None
+
+    async def list_agent_sessions(
+        self, agent_name: str, user: str
+    ) -> list[StoredAgentSession]:
+        rows = await self.pool.fetch(
+            """
+            SELECT session_id::text, agent_name, user_subject, status,
+                metadata, created_at, updated_at
+            FROM agent_sessions
+            WHERE agent_name = $1 AND user_subject = $2
+            ORDER BY created_at DESC
+            """,
+            agent_name,
+            user,
+        )
+        return [_session_from_row(row) for row in rows]
+
+    async def append_agent_message(
+        self,
+        session_id: str,
+        role: str,
+        message: str,
+        *,
+        context: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> StoredAgentMessage:
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO agent_messages (session_id, role, message, context, created_at)
+            VALUES ($1::uuid, $2, $3, $4::jsonb, $5::timestamptz)
+            RETURNING id::text, session_id::text, role, message, context, created_at
+            """,
+            session_id,
+            role,
+            message,
+            json.dumps(context or {}),
+            created_at,
+        )
+        return _message_from_row(row)
+
+    async def list_agent_messages(self, session_id: str) -> list[StoredAgentMessage]:
+        rows = await self.pool.fetch(
+            """
+            SELECT id::text, session_id::text, role, message, context, created_at
+            FROM agent_messages
+            WHERE session_id = $1::uuid
+            ORDER BY id ASC
+            """,
+            session_id,
+        )
+        return [_message_from_row(row) for row in rows]
+
+    async def upsert_deployment(
+        self,
+        deployment_id: str,
+        workload_name: str,
+        target: str,
+        status: str,
+        user: str,
+        *,
+        endpoint: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        now: str | None = None,
+    ) -> StoredDeployment:
+        timestamp = now or utc_now_iso()
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO deployments (
+                deployment_id, workload_name, target, status, endpoint,
+                user_subject, metadata, created_at, updated_at
+            )
+            VALUES (
+                $1::uuid, $2, $3, $4, $5, $6, $7::jsonb,
+                $8::timestamptz, $8::timestamptz
+            )
+            ON CONFLICT (workload_name, target, user_subject) DO UPDATE SET
+                status = EXCLUDED.status,
+                endpoint = EXCLUDED.endpoint,
+                metadata = EXCLUDED.metadata,
+                updated_at = EXCLUDED.updated_at
+            RETURNING deployment_id::text, workload_name, target, status, endpoint,
+                user_subject, metadata, created_at, updated_at
+            """,
+            deployment_id,
+            workload_name,
+            target,
+            status,
+            endpoint,
+            user,
+            json.dumps(metadata or {}),
+            timestamp,
+        )
+        return _deployment_from_row(row)
+
+    async def list_deployments(
+        self, user: str, *, workload_name: str | None = None
+    ) -> list[StoredDeployment]:
+        rows = await self.pool.fetch(
+            """
+            SELECT deployment_id::text, workload_name, target, status, endpoint,
+                user_subject, metadata, created_at, updated_at
+            FROM deployments
+            WHERE user_subject = $1
+                AND ($2::text IS NULL OR workload_name = $2)
+            ORDER BY updated_at DESC
+            """,
+            user,
+            workload_name,
+        )
+        return [_deployment_from_row(row) for row in rows]
+
+    async def get_deployment(self, deployment_id: str) -> StoredDeployment | None:
+        row = await self.pool.fetchrow(
+            """
+            SELECT deployment_id::text, workload_name, target, status, endpoint,
+                user_subject, metadata, created_at, updated_at
+            FROM deployments
+            WHERE deployment_id = $1::uuid
+            """,
+            deployment_id,
+        )
+        return _deployment_from_row(row) if row else None
+
+    async def record_channel_message(
+        self,
+        channel: str,
+        agent_name: str,
+        external_user_id: str,
+        session_id: str,
+        direction: str,
+        message: str,
+        user: str,
+        *,
+        run_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        created_at: str,
+    ) -> StoredChannelMessage:
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO channel_messages (
+                channel, agent_name, external_user_id, session_id, run_id,
+                direction, message, user_subject, metadata, created_at
+            )
+            VALUES (
+                $1, $2, $3, $4::uuid, $5::uuid, $6, $7, $8, $9::jsonb,
+                $10::timestamptz
+            )
+            RETURNING id::text, channel, agent_name, external_user_id,
+                session_id::text, run_id::text, direction, message, user_subject,
+                metadata, created_at
+            """,
+            channel,
+            agent_name,
+            external_user_id,
+            session_id,
+            run_id,
+            direction,
+            message,
+            user,
+            json.dumps(metadata or {}),
+            created_at,
+        )
+        return _channel_message_from_row(row)
+
+    async def find_stale_runs(
+        self, *, before: str, statuses: Iterable[str] = HEARTBEAT_RUN_STATUSES
+    ) -> list[StoredRun]:
+        rows = await self.pool.fetch(
+            """
+            SELECT run_id::text, workload_name, user_subject, status, payload,
+                result, error, session_id::text, created_at, updated_at,
+                heartbeat_at, completed_at
+            FROM runs
+            WHERE status = ANY($1::text[])
+                AND COALESCE(heartbeat_at, updated_at, created_at) < $2::timestamptz
+            """,
+            list(statuses),
+            before,
+        )
+        return [_run_from_row(row) for row in rows]
+
+
+async def connect_postgres_control_plane(dsn: str) -> PostgresControlPlaneRepository:
+    """Create and initialize a Postgres repository."""
+
+    import asyncpg  # type: ignore[import-untyped]
+
+    pool = await asyncpg.create_pool(dsn)
+    repo = PostgresControlPlaneRepository(pool)
+    await repo.init()
+    return repo
+
+
+def _run_from_row(row: Any) -> StoredRun:
+    return StoredRun(
+        run_id=str(row["run_id"]),
+        workload_name=str(row["workload_name"]),
+        status=str(row["status"]),
+        user=str(row["user_subject"]),
+        created_at=str(_iso(row["created_at"])),
+        updated_at=_iso(row["updated_at"]),
+        heartbeat_at=_iso(row["heartbeat_at"]),
+        completed_at=_iso(row["completed_at"]),
+        session_id=str(row["session_id"]) if row["session_id"] is not None else None,
+        payload=_json_dict(row["payload"]),
+        result=_json_dict(row["result"]),
+        error=row["error"],
+    )
+
+
+def _event_from_row(row: Any) -> StoredRunEvent:
+    return StoredRunEvent(
+        id=str(row["id"]),
+        run_id=str(row["run_id"]),
+        timestamp=str(_iso(row["timestamp"])),
+        type=str(row["type"]),
+        message=str(row["message"]),
+        data=_json_dict(row["data"]) or {},
+    )
+
+
+def _artifact_from_dict(
+    run_id: str, artifact: dict[str, Any], fallback_index: int
+) -> StoredArtifact:
+    return StoredArtifact(
+        id=str(artifact.get("id") or f"{run_id}-{fallback_index}"),
+        run_id=run_id,
+        name=str(artifact.get("name") or f"artifact-{fallback_index}"),
+        uri=str(artifact.get("uri") or ""),
+        content_type=artifact.get("content_type"),
+        size_bytes=artifact.get("size_bytes"),
+        created_at=str(artifact.get("created_at") or utc_now_iso()),
+        metadata=artifact.get("metadata") or {},
+    )
+
+
+def _artifact_from_row(row: Any) -> StoredArtifact:
+    return StoredArtifact(
+        id=str(row["id"]),
+        run_id=str(row["run_id"]),
+        name=str(row["name"]),
+        uri=str(row["uri"]),
+        content_type=row["content_type"],
+        size_bytes=row["size_bytes"],
+        created_at=str(_iso(row["created_at"])),
+        metadata=_json_dict(row["metadata"]) or {},
+    )
+
+
+def _session_from_row(row: Any) -> StoredAgentSession:
+    return StoredAgentSession(
+        session_id=str(row["session_id"]),
+        agent_name=str(row["agent_name"]),
+        status=str(row["status"]),
+        user=str(row["user_subject"]),
+        created_at=str(_iso(row["created_at"])),
+        updated_at=_iso(row["updated_at"]),
+        metadata=_json_dict(row["metadata"]) or {},
+    )
+
+
+def _message_from_row(row: Any) -> StoredAgentMessage:
+    return StoredAgentMessage(
+        message_id=str(row["id"]),
+        session_id=str(row["session_id"]),
+        role=str(row["role"]),
+        message=str(row["message"]),
+        context=_json_dict(row["context"]) or {},
+        created_at=str(_iso(row["created_at"])),
+    )
+
+
+def _deployment_from_row(row: Any) -> StoredDeployment:
+    return StoredDeployment(
+        deployment_id=str(row["deployment_id"]),
+        workload_name=str(row["workload_name"]),
+        target=str(row["target"]),
+        status=str(row["status"]),
+        user=str(row["user_subject"]),
+        endpoint=row["endpoint"],
+        metadata=_json_dict(row["metadata"]) or {},
+        created_at=str(_iso(row["created_at"])),
+        updated_at=_iso(row["updated_at"]),
+    )
+
+
+def _channel_message_from_row(row: Any) -> StoredChannelMessage:
+    return StoredChannelMessage(
+        message_id=str(row["id"]),
+        channel=str(row["channel"]),
+        agent_name=str(row["agent_name"]),
+        external_user_id=str(row["external_user_id"]),
+        session_id=str(row["session_id"]),
+        run_id=str(row["run_id"]) if row["run_id"] is not None else None,
+        direction=str(row["direction"]),
+        message=str(row["message"]),
+        user=str(row["user_subject"]),
+        metadata=_json_dict(row["metadata"]) or {},
+        created_at=str(_iso(row["created_at"])),
+    )
+
+
+def workloads_by_name(
+    workloads: Sequence[WorkloadDefinition],
+) -> dict[str, WorkloadDefinition]:
+    return {workload.metadata.name: workload for workload in workloads}

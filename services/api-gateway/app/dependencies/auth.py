@@ -5,15 +5,14 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
 
-from app.config import Settings, get_settings
+from app.config import get_settings
 from app.models.auth import TokenData
 
 _bearer_scheme = HTTPBearer()
 
 
-def get_current_user(
+async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer_scheme)],
-    settings: Annotated[Settings, Depends(get_settings)],
 ) -> TokenData:
     """Validate Bearer JWT and return the token payload.
 
@@ -24,6 +23,7 @@ def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    settings = get_settings()
     try:
         payload: dict[str, object] = jwt.decode(
             credentials.credentials,

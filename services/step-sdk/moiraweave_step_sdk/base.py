@@ -1,7 +1,7 @@
-"""BaseStep — abstract base class for all moiraweave pipeline steps.
+"""BaseStep — abstract base class for KServe-compatible workload components.
 
-Each step exposes a KServe V2-compatible REST API via :meth:`build_app`.
-Concrete steps must implement :attr:`name`, :attr:`version`, and
+Each component exposes a KServe V2-compatible REST API via :meth:`build_app`.
+Concrete components must implement :attr:`name`, :attr:`version`, and
 :meth:`predict`.
 
 Usage::
@@ -36,7 +36,7 @@ from moiraweave_step_sdk.models import (
 
 
 class BaseStep(ABC):
-    """Abstract base for a single-model KServe V2 inference step.
+    """Abstract base for a single-model KServe V2 inference component.
 
     Sub-classes must implement :attr:`name`, :attr:`version`, and
     :meth:`predict`.  Override :meth:`is_ready` to add custom readiness
@@ -46,7 +46,7 @@ class BaseStep(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Step identifier, e.g. ``"audio-transcribe-whisper"``."""
+        """Component identifier, e.g. ``"audio-transcribe-whisper"``."""
 
     @property
     @abstractmethod

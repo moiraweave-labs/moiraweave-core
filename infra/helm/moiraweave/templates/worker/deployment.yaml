@@ -30,6 +30,8 @@ spec:
               value: {{ include "moiraweave.redisUrl" . | quote }}
             - name: QDRANT_URL
               value: {{ include "moiraweave.qdrantUrl" . | quote }}
+            - name: POSTGRES_DSN
+              value: {{ include "moiraweave.postgresDsn" . | quote }}
           ports:
             - name: metrics
               containerPort: 9090

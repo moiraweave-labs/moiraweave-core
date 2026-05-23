@@ -13,7 +13,9 @@ dependencies = [
     "pydantic-settings>=2.6",
     # Redis
     "redis[hiredis]>=5.0",
-    # Qdrant vector store (RAG pipeline)
+    # Postgres control-plane storage
+    "asyncpg>=0.30",
+    # Qdrant vector store (RAG/search workloads)
     "qdrant-client[fastembed]>=1.12",
     # Prometheus metrics
     "prometheus-fastapi-instrumentator>=7.0",

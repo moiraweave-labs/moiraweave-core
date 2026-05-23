@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fakeredis.aioredis import FakeRedis
 from httpx import ASGITransport, AsyncClient
+from moiraweave_shared.control_plane import InMemoryControlPlaneRepository
 from qdrant_client import AsyncQdrantClient
 
 # ---------------------------------------------------------------------------
@@ -36,14 +37,12 @@ os.environ.setdefault("OTEL_ENABLED", "false")
 # App imports must come AFTER env vars are set.
 from app.config import get_settings  # noqa: E402
 from app.dependencies.auth import get_current_user  # noqa: E402
-from app.dependencies.qdrant import get_qdrant  # noqa: E402
-from app.dependencies.redis import get_redis  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.auth import TokenData  # noqa: E402
 
 # Snapshot of ALL app.* modules loaded at conftest import time (gateway's).
 # Used by _restore_gateway_app to re-populate sys.modules before each test so
-# that patch("app.routes.pipelines.xxx") resolves to the gateway, not the worker
+# that patch("app.routes.workloads.xxx") resolves to the gateway, not the worker
 # or step (which also clear and reload app.* during collection).
 _GATEWAY_APP_MODULES: dict[str, object] = {
     k: v for k, v in sys.modules.items() if k == "app" or k.startswith("app.")
@@ -83,6 +82,13 @@ def mock_qdrant() -> MagicMock:
 
 
 @pytest.fixture
+def control_plane() -> InMemoryControlPlaneRepository:
+    """In-memory control-plane repository for API tests."""
+
+    return InMemoryControlPlaneRepository()
+
+
+@pytest.fixture
 def fake_user() -> TokenData:
     return TokenData(subject="testuser")
 
@@ -91,6 +97,7 @@ def fake_user() -> TokenData:
 async def client(
     fake_redis: FakeRedis,
     mock_qdrant: MagicMock,
+    control_plane: InMemoryControlPlaneRepository,
 ) -> AsyncGenerator[AsyncClient]:
     """Unauthenticated test client — auth is NOT bypassed.
 
@@ -99,8 +106,8 @@ async def client(
     """
     app.state.redis = fake_redis
     app.state.qdrant = mock_qdrant
-    app.dependency_overrides[get_redis] = lambda: fake_redis
-    app.dependency_overrides[get_qdrant] = lambda: mock_qdrant
+    app.state.control_plane = control_plane
+
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -108,7 +115,7 @@ async def client(
             yield ac
     finally:
         app.dependency_overrides.clear()
-        for attr in ("redis", "qdrant"):
+        for attr in ("redis", "qdrant", "control_plane"):
             if hasattr(app.state, attr):
                 delattr(app.state, attr)
 
@@ -123,7 +130,11 @@ async def auth_client(
     Only the ``get_current_user`` override is added here; all other
     infrastructure (Redis, Qdrant, teardown) is owned by ``client``.
     """
-    app.dependency_overrides[get_current_user] = lambda: fake_user
+
+    async def _override_user() -> TokenData:
+        return fake_user
+
+    app.dependency_overrides[get_current_user] = _override_user
     try:
         yield client
     finally:

@@ -9,13 +9,13 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 
 
 def _make_query_response(
-    job_id: str = "job-123",
+    document_id: str = "doc-123",
     score: float = 0.9,
     document: str = "test document",
     metadata: dict | None = None,
 ) -> QueryResponse:
     return QueryResponse(
-        id=job_id,
+        id=document_id,
         score=score,
         document=document,
         metadata=metadata
@@ -33,7 +33,7 @@ async def test_search_returns_results(
 ) -> None:
     # Given
     mock_qdrant.query = AsyncMock(
-        return_value=[_make_query_response(job_id="job-1", score=0.95)]
+        return_value=[_make_query_response(document_id="doc-1", score=0.95)]
     )
 
     # When
@@ -45,7 +45,7 @@ async def test_search_returns_results(
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 1
-    assert body["results"][0]["id"] == "job-1"
+    assert body["results"][0]["id"] == "doc-1"
     assert body["results"][0]["score"] == 0.95
     assert body["results"][0]["payload"]["text"] == "test document"
 
@@ -144,8 +144,8 @@ async def test_search_multiple_results_ordered(
     # Given: Qdrant returns two results in score order
     mock_qdrant.query = AsyncMock(
         return_value=[
-            _make_query_response(job_id="job-a", score=0.9),
-            _make_query_response(job_id="job-b", score=0.7),
+            _make_query_response(document_id="doc-a", score=0.9),
+            _make_query_response(document_id="doc-b", score=0.7),
         ]
     )
 
@@ -157,5 +157,5 @@ async def test_search_multiple_results_ordered(
     # Then
     body = response.json()
     assert body["total"] == 2
-    assert body["results"][0]["id"] == "job-a"
-    assert body["results"][1]["id"] == "job-b"
+    assert body["results"][0]["id"] == "doc-a"
+    assert body["results"][1]["id"] == "doc-b"

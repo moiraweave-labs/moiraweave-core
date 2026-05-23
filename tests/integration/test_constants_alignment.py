@@ -16,62 +16,62 @@ import pytest
 class TestStreamConstants:
     """Verify canonical constant values in the shared package."""
 
+    def test_run_stream(self) -> None:
+        from moiraweave_shared.streams import RUN_STREAM
+
+        assert RUN_STREAM == "moiraweave:runs"
+
     def test_consumer_group(self) -> None:
         from moiraweave_shared.streams import CONSUMER_GROUP
 
-        assert CONSUMER_GROUP == "moiraweave-pipeline"
+        assert CONSUMER_GROUP == "moiraweave-runs"
 
-    def test_job_key_prefix(self) -> None:
-        from moiraweave_shared.streams import JOB_KEY_PREFIX
+    def test_dead_letter_stream(self) -> None:
+        from moiraweave_shared.streams import DEAD_LETTER_STREAM
 
-        assert JOB_KEY_PREFIX == "pipeline:job"
-
-    def test_job_key_format(self) -> None:
-        from moiraweave_shared.streams import JOB_KEY_PREFIX
-
-        job_id = "abc-123"
-        assert f"{JOB_KEY_PREFIX}:{job_id}" == "pipeline:job:abc-123"
+        assert DEAD_LETTER_STREAM == "moiraweave:runs:dead-letter"
 
 
-class TestPipelineJobMessage:
+class TestRunMessage:
     def test_serializes_to_flat_dict(self) -> None:
-        from moiraweave_shared.schemas import PipelineJobMessage
+        from moiraweave_shared.schemas import RunMessage
 
-        msg = PipelineJobMessage(
-            job_id="abc-123",
-            pipeline_id="image-search",
+        msg = RunMessage(
+            run_id="abc-123",
+            workload_name="image-search",
             payload='{"query": "cats"}',
             user="user1",
         )
         data = msg.model_dump(mode="python")
-        assert data["job_id"] == "abc-123"
-        assert data["pipeline_id"] == "image-search"
+        assert data["run_id"] == "abc-123"
+        assert data["workload_name"] == "image-search"
         assert data["user"] == "user1"
+        assert data["workload_manifest"] is None
 
     def test_roundtrip_from_redis_fields(self) -> None:
         """Simulate what Redis xreadgroup returns and validate deserialization."""
-        from moiraweave_shared.schemas import PipelineJobMessage
+        from moiraweave_shared.schemas import RunMessage
 
         redis_fields: dict[str, str] = {
-            "job_id": "xyz-789",
-            "pipeline_id": "text-search",
+            "run_id": "xyz-789",
+            "workload_name": "text-search",
             "payload": '{"query": "dogs"}',
             "user": "alice",
         }
-        msg = PipelineJobMessage.model_validate(redis_fields)
-        assert msg.job_id == "xyz-789"
-        assert msg.pipeline_id == "text-search"
+        msg = RunMessage.model_validate(redis_fields)
+        assert msg.run_id == "xyz-789"
+        assert msg.workload_name == "text-search"
         assert msg.user == "alice"
 
     def test_invalid_missing_field_raises(self) -> None:
         """A message missing a required field must fail validation."""
-        from moiraweave_shared.schemas import PipelineJobMessage
+        from moiraweave_shared.schemas import RunMessage
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            PipelineJobMessage.model_validate(
+            RunMessage.model_validate(
                 {
-                    "job_id": "x",
-                    # missing pipeline_id, payload, user
+                    "run_id": "x",
+                    # missing workload_name, payload, user
                 }
             )

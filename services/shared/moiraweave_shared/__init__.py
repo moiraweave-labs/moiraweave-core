@@ -1,1 +1,1 @@
-"""MoiraWeave shared utilities — Redis stream constants and job schemas."""
+"""MoiraWeave shared workload models, stream constants, and schemas."""

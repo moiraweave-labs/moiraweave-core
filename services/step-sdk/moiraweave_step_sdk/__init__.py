@@ -1,4 +1,4 @@
-"""moiraweave-step-sdk — KServe V2 protocol base classes for pipeline steps."""
+"""moiraweave-step-sdk — KServe V2 protocol base classes for workload components."""
 
 from moiraweave_step_sdk.base import BaseStep
 from moiraweave_step_sdk.models import (

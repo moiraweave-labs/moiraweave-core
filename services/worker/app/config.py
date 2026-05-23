@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     )
 
     redis_url: RedisDsn = RedisDsn("redis://redis:6379/0")
+    postgres_dsn: str = "postgresql://moiraweave:moiraweave-dev@postgres:5432/moiraweave"
     log_level: str = "INFO"
 
     # MLflow — inference metrics tracking
@@ -21,14 +22,21 @@ class Settings(BaseSettings):
     mlflow_model_version: str = "1"
     mlflow_experiment_name: str = "moiraweave-inference"
 
-    # Job result TTL in Redis (seconds)
-    job_ttl_seconds: int = 3600
+    # Retained for old env compatibility. Run metadata lives in Postgres.
+    run_ttl_seconds: int = 604800
 
-    # Per-step HTTP timeout for pipeline execution (seconds)
+    # HTTP timeout for model/agent/pipeline calls (seconds)
+    call_timeout_seconds: float = 300.0
     step_timeout_seconds: float = 300.0
 
-    # Pipeline-as-code — directory containing per-pipeline subdirectories
-    pipelines_dir: str = "pipelines"
+    # Workload manifests and artifacts
+    workloads_dir: str = "workloads"
+    artifacts_dir: str = "artifacts"
+
+    # Worker liveness and stale-run recovery.
+    heartbeat_interval_seconds: float = 10.0
+    stale_run_seconds: float = 120.0
+    stale_check_interval_seconds: float = 30.0
 
 
 @lru_cache

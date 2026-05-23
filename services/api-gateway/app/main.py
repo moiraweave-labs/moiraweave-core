@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from moiraweave_shared.control_plane import connect_postgres_control_plane
 from prometheus_fastapi_instrumentator import Instrumentator
 from qdrant_client import AsyncQdrantClient
 from redis.asyncio import Redis
@@ -12,7 +13,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import get_settings
 from app.middleware.rate_limit import limiter
 from app.middleware.telemetry import setup_tracing, shutdown_tracing
-from app.routes import auth, health, pipelines, search
+from app.routes import auth, health, search, workloads
 
 _settings = get_settings()
 
@@ -21,11 +22,15 @@ _settings = get_settings()
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # startup
     app.state.redis = Redis.from_url(str(_settings.redis_url), decode_responses=True)
+    app.state.control_plane = await connect_postgres_control_plane(
+        _settings.postgres_dsn
+    )
     qdrant = AsyncQdrantClient(url=str(_settings.qdrant_url))
     qdrant.set_model(_settings.embedding_model)
     app.state.qdrant = qdrant
     yield
     # shutdown
+    await app.state.control_plane.close()
     await app.state.redis.aclose()
     await app.state.qdrant.close()
     shutdown_tracing()
@@ -55,7 +60,7 @@ setup_tracing(app, _settings)
 
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth")
-app.include_router(pipelines.router)
+app.include_router(workloads.router)
 app.include_router(search.router, prefix="/v1")
 
 # Expose Prometheus metrics at /metrics (scraped by Prometheus ServiceMonitor)

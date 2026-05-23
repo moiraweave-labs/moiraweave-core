@@ -1,0 +1,27 @@
+{{- range $name, $workload := .Values.workloads }}
+{{- if and ($workload.enabled) (or (and ($workload.persistence) ($workload.persistence.enabled)) (and ($workload.agent) ($workload.agent.workspaceMount))) }}
+{{- $ctx := dict "root" $ "name" $name }}
+{{- $size := "10Gi" }}
+{{- if and $workload.persistence $workload.persistence.size }}
+{{- $size = $workload.persistence.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "moiraweave.workload.fullname" $ctx }}-data
+  labels:
+    {{- include "moiraweave.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: workload
+    moiraweave.io/workload: {{ $name }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ $size }}
+  {{- if and $workload.persistence $workload.persistence.storageClass }}
+  storageClassName: {{ $workload.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

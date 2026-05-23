@@ -75,6 +75,29 @@ Fully qualified name for the worker component.
 {{- end }}
 
 {{/*
+Fully qualified name for the UI component.
+*/}}
+{{- define "moiraweave.ui.fullname" -}}
+{{- printf "%s-ui" (include "moiraweave.fullname" .) }}
+{{- end }}
+
+{{/*
+Fully qualified name for one workload.
+*/}}
+{{- define "moiraweave.workload.fullname" -}}
+{{- printf "%s-%s" (include "moiraweave.fullname" .root) .name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Selector labels for one workload.
+*/}}
+{{- define "moiraweave.workload.selectorLabels" -}}
+{{ include "moiraweave.selectorLabels" .root }}
+app.kubernetes.io/component: workload
+moiraweave.io/workload: {{ .name }}
+{{- end }}
+
+{{/*
 Redis URL — points to the Bitnami Redis master service.
 */}}
 {{- define "moiraweave.redisUrl" -}}
@@ -86,4 +109,11 @@ Qdrant URL — points to the Qdrant service.
 */}}
 {{- define "moiraweave.qdrantUrl" -}}
 {{- printf "http://%s-qdrant:6333" .Release.Name }}
+{{- end }}
+
+{{/*
+Postgres DSN — defaults to the Bitnami PostgreSQL subchart.
+*/}}
+{{- define "moiraweave.postgresDsn" -}}
+{{- printf "postgresql://%s:%s@%s-postgresql:5432/%s" .Values.postgresql.auth.username .Values.postgresql.auth.password .Release.Name .Values.postgresql.auth.database }}
 {{- end }}

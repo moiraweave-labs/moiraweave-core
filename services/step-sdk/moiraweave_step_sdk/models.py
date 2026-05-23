@@ -99,9 +99,9 @@ class ModelMetadataResponse(BaseModel):
     Extends the KServe V2 spec with moiraweave-specific fields
     (``task``, ``implementation``) to enable router introspection.
 
-    :param name: Model (step) name.
-    :param versions: Supported versions list; single-element for moiraweave steps.
-    :param platform: Backend identifier; always ``"moiraweave"`` for our steps.
+    :param name: Model or component name.
+    :param versions: Supported versions list.
+    :param platform: Backend identifier; defaults to ``"moiraweave"``.
     :param inputs: Input tensor descriptors from the task schema.
     :param outputs: Output tensor descriptors from the task schema.
     :param task: MoiraWeave task name, e.g. ``"audio-transcribe"``.

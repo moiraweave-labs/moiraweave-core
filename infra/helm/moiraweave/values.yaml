@@ -6,9 +6,9 @@
 nameOverride: ""
 fullnameOverride: ""
 # ---------------------------------------------------------------------------
-# Image pull secrets for user step images stored in private registries.
+# Image pull secrets for workload images stored in private registries.
 # Create a secret once with:
-#   kubectl create secret docker-registry moiraweave-step-pull-secret \
+#   kubectl create secret docker-registry moiraweave-workload-pull-secret \
 #     --docker-server=ghcr.io \
 #     --docker-username=<user> \
 #     --docker-password=<token> \
@@ -16,7 +16,7 @@ fullnameOverride: ""
 # Then reference it here.
 # ---------------------------------------------------------------------------
 imagePullSecrets: []
-# - name: moiraweave-step-pull-secret
+# - name: moiraweave-workload-pull-secret
 # ---------------------------------------------------------------------------
 # Image registry used by CI/CD (F3-3 pushes here)
 # ---------------------------------------------------------------------------
@@ -60,8 +60,10 @@ apiGateway:
       value: 10/minute
     - name: EMBEDDING_MODEL
       value: BAAI/bge-small-en-v1.5
-    - name: PIPELINES_DIR
-      value: /workspace/pipelines
+    - name: WORKLOADS_DIR
+      value: /workspace/workloads
+    - name: ARTIFACTS_DIR
+      value: /workspace/artifacts
     - name: OTEL_ENABLED
       value: "false"
     - name: OTEL_OTLP_ENDPOINT
@@ -115,8 +117,10 @@ worker:
   env:
     - name: LOG_LEVEL
       value: INFO
-    - name: PIPELINES_DIR
-      value: /workspace/pipelines
+    - name: WORKLOADS_DIR
+      value: /workspace/workloads
+    - name: ARTIFACTS_DIR
+      value: /workspace/artifacts
   livenessProbe:
     exec:
       command:
@@ -147,13 +151,8 @@ worker:
     # KEDA-specific settings (only used when type = "keda").
     # Requires KEDA operator installed in the cluster.
     keda:
-      # Redis Streams trigger — scales worker based on stream consumer group lag.
-      # Each pipeline has its own trigger stream key (defined in pipeline.yaml as
-      # ``trigger.stream``, e.g. "pipelines:image-search:jobs"). Override this
-      # with the specific pipeline's stream key in your values overrides file.
-      redisStreamKey: "pipelines:image-search:jobs"
-      # Must match CONSUMER_GROUP in moiraweave_shared.streams (currently "moiraweave-pipeline").
-      consumerGroup: moiraweave-pipeline
+      redisStreamKey: "moiraweave:runs"
+      consumerGroup: moiraweave-runs
       pendingEntriesCount: "5" # scale-up threshold per replica
       # Address of the Redis instance (overrides moiraweave.redisUrl if set).
       # Defaults to the in-cluster Redis service derived from moiraweave.redisUrl.
@@ -180,12 +179,45 @@ redis:
     persistence:
       enabled: false
 # ---------------------------------------------------------------------------
+# PostgreSQL (Bitnami subchart) — required control-plane storage.
+# ---------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  auth:
+    username: moiraweave
+    password: moiraweave-dev
+    database: moiraweave
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+# ---------------------------------------------------------------------------
 # Qdrant (subchart)
 # https://github.com/qdrant/qdrant-helm
 # ---------------------------------------------------------------------------
 qdrant:
   enabled: true
   replicaCount: 1
+# ---------------------------------------------------------------------------
+# Optional Ops dashboard UI
+# ---------------------------------------------------------------------------
+ui:
+  enabled: false
+  image:
+    repository: ghcr.io/moiraweave-labs/moiraweave-ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 # ---------------------------------------------------------------------------
 # ServiceAccount
 # ---------------------------------------------------------------------------
@@ -205,89 +237,14 @@ rbac:
 networkPolicy:
   enabled: true
 # ---------------------------------------------------------------------------
-# vLLM inference server (F2-4)
-# Disabled by default; enable via values-gpu.yaml overlay or set vllm.enabled=true
-# ---------------------------------------------------------------------------
-vllm:
-  enabled: false
-  image:
-    repository: vllm/vllm-openai
-    tag: "v0.6.6"
-    pullPolicy: IfNotPresent
-  replicaCount: 1
-  # Model to load at startup.  Set to a public HF model or a locally mounted path.
-  model: "mistralai/Mistral-7B-Instruct-v0.3"
-  # HuggingFace token for gated models — read from the same pre-existing Secret
-  # used by api-gateway (kubectl create secret generic moiraweave-secrets ...).
-  hfTokenSecret:
-    name: moiraweave-secrets
-    key: HF_TOKEN
-  resources:
-    requests:
-      cpu: "2000m"
-      memory: 8Gi
-      nvidia.com/gpu: "1"
-    limits:
-      cpu: "4000m"
-      memory: 16Gi
-      nvidia.com/gpu: "1"
-  # Place vLLM pods on GPU-capable nodes.
-  # GPU Operator + NFD (F2-3) label nodes with nvidia.com/gpu.present=true.
-  nodeSelector:
-    nvidia.com/gpu.present: "true"
-  tolerations:
-    - key: nvidia.com/gpu
-      operator: Exists
-      effect: NoSchedule
-  service:
-    type: ClusterIP
-    port: 8000
-  env:
-    - name: VLLM_WORKER_MULTIPROC_METHOD
-      value: spawn
-    - name: VLLM_TENSOR_PARALLEL_SIZE
-      value: "1"
-    - name: HF_HOME
-      value: /data/huggingface
-  # PVC to cache HuggingFace model weights — avoids re-download on pod restart.
-  persistence:
-    enabled: true
-    size: 30Gi
-    storageClass: "" # "" → cluster default StorageClass
-  livenessProbe:
-    httpGet:
-      path: /health
-      port: 8000
-    initialDelaySeconds: 120 # allow time for model loading
-    periodSeconds: 30
-    failureThreshold: 5
-  readinessProbe:
-    httpGet:
-      path: /health
-      port: 8000
-    initialDelaySeconds: 60
-    periodSeconds: 10
-    failureThreshold: 10
-# ---------------------------------------------------------------------------
-# Shared PVC for model-weight caching (used by steps with modelVolume set).
+# Shared PVC for model-weight caching when workload manifests request it.
 # ---------------------------------------------------------------------------
 modelsCache:
   size: 10Gi
   storageClass: "" # "" → cluster default StorageClass
+
 # ---------------------------------------------------------------------------
-# MoiraWeave pipelines
-#
-# Intentionally empty by default to keep the platform generic and
-# workspace-owned. Define pipelines/steps via user overlays.
-#
-# Example:
-# pipelines:
-#   my-pipeline:
-#     enabled: true
-#     env:
-#       QDRANT_COLLECTION: "my-collection"
-#     steps:
-#       embed:
-#         image: "ghcr.io/moiraweave-labs/moiraweave-steps/step-text-embed-fastembed:v1.0.0"
+# Generic AI workloads rendered from workload.yaml manifests.
+# Prefer using `moira deploy k8s` to generate this block.
 # ---------------------------------------------------------------------------
-pipelines: {}
+workloads: {}

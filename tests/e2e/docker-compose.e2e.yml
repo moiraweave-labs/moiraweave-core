@@ -2,7 +2,7 @@
 #
 # Extends docker-compose.yml to:
 #   1. Add the mock-step container (KServe V2 echo step, no ML deps)
-#   2. Mount the E2E fixture pipelines over the default pipelines/ dir
+#   2. Mount the E2E fixture workloads over the default workloads/ dir
 #   3. Wire up service dependencies so the stack is ready when tests run
 #
 # Usage (local):
@@ -38,12 +38,14 @@ services:
       JWT_SECRET_KEY: "${E2E_JWT_SECRET_KEY:-e2e-local-test-secret-not-for-production}"
       # OTel disabled for tests to reduce noise and avoid Jaeger dependency.
       OTEL_ENABLED: "false"
-      PIPELINES_DIR: "/e2e-pipelines"
+      WORKLOADS_DIR: "/e2e-workloads"
     volumes:
-      - ./tests/e2e/fixtures/pipelines:/e2e-pipelines:ro
-    # Override the base depends_on to drop qdrant (not used in E2E echo pipeline).
+      - ./tests/e2e/fixtures/workloads:/e2e-workloads:ro
+    # Override the base depends_on to include the mock runtime.
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       jaeger:
         condition: service_started
@@ -52,9 +54,13 @@ services:
 
   worker:
     environment:
-      PIPELINES_DIR: "/e2e-pipelines"
+      WORKLOADS_DIR: "/e2e-workloads"
     volumes:
-      - ./tests/e2e/fixtures/pipelines:/e2e-pipelines:ro
+      - ./tests/e2e/fixtures/workloads:/e2e-workloads:ro
     depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
       mock-step:
         condition: service_healthy
