@@ -64,6 +64,6 @@ make ci
 ## Related repositories
 
 - [moiraweave-cli](https://github.com/moiraweave-labs/moiraweave-cli): user-facing CLI
-- [moiraweave-ui](https://github.com/moiraweave-labs/moiraweave-ui): optional Ops dashboard
+- [moiraweave-ui](https://github.com/moiraweave-labs/moiraweave-ui): Ops dashboard
 - [moiraweave-docs](https://github.com/moiraweave-labs/moiraweave-docs): public documentation
 - [.github](https://github.com/moiraweave-labs/.github): org-wide standards
