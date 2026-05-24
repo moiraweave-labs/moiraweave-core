@@ -92,6 +92,33 @@ async def test_get_workload_returns_manifest(auth_client: AsyncClient) -> None:
     assert resp.json()["manifest"]["metadata"]["name"] == "hermes"
 
 
+async def test_list_templates_includes_demo_agent(auth_client: AsyncClient) -> None:
+    resp = await auth_client.get("/v1/templates")
+
+    assert resp.status_code == 200
+    templates = {item["id"]: item for item in resp.json()}
+    assert "demo-agent" in templates
+    assert templates["demo-agent"]["manifest"]["spec"]["agent"]["adapter"] == (
+        "generic-http"
+    )
+    assert not templates["demo-agent"]["manifest"]["spec"].get("secrets")
+
+
+async def test_create_workload_from_template_registers_manifest(
+    auth_client: AsyncClient,
+) -> None:
+    resp = await auth_client.post(
+        "/v1/workloads/from-template",
+        json={"template_id": "demo-agent", "parameters": {"name": "Demo Agent!"}},
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["name"] == "demo-agent"
+    assert body["type"] == "agent-service"
+    assert body["manifest"]["spec"]["command"] == ["python", "-u", "-c"]
+
+
 async def test_submit_run_queues_dispatch(
     auth_client: AsyncClient,
     fake_redis: FakeRedis,
@@ -261,6 +288,40 @@ async def test_events_and_artifacts_are_returned(
     assert artifacts.json()[0]["name"] == "output.json"
 
 
+async def test_artifact_library_filters_by_workload_session_and_type(
+    auth_client: AsyncClient,
+    control_plane: InMemoryControlPlaneRepository,
+) -> None:
+    await control_plane.create_run(
+        "run-artifact-library",
+        "hermes",
+        {},
+        "testuser",
+        created_at="2026-01-01T00:00:00+00:00",
+        session_id="00000000-0000-0000-0000-000000000001",
+    )
+    await control_plane.record_artifact(
+        "run-artifact-library",
+        {
+            "id": "artifact-library-1",
+            "name": "trace.json",
+            "uri": "file:///trace.json",
+            "content_type": "application/json",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+
+    resp = await auth_client.get(
+        "/v1/artifacts?"
+        "workload_name=hermes&"
+        "session_id=00000000-0000-0000-0000-000000000001&"
+        "content_type=application/json"
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["name"] == "trace.json"
+
+
 async def test_agent_session_message_creates_run(
     auth_client: AsyncClient,
     control_plane: InMemoryControlPlaneRepository,
@@ -283,6 +344,37 @@ async def test_agent_session_message_creates_run(
     history = await auth_client.get(f"/v1/agents/hermes/sessions/{session_id}/messages")
     assert history.status_code == 200
     assert history.json()[0]["message"] == "continue"
+    assert history.json()[0]["run_id"] == run_id
+    assert history.json()[0]["run_status"] == "queued"
+
+
+async def test_agent_history_includes_latest_event_and_artifact_count(
+    auth_client: AsyncClient,
+    control_plane: InMemoryControlPlaneRepository,
+) -> None:
+    await _register(auth_client)
+    session_resp = await auth_client.post("/v1/agents/hermes/sessions", json={})
+    session_id = session_resp.json()["session_id"]
+    message_resp = await auth_client.post(
+        f"/v1/agents/hermes/sessions/{session_id}/messages",
+        json={"message": "write report"},
+    )
+    run_id = message_resp.json()["run_id"]
+    await control_plane.append_run_event(
+        run_id,
+        "executor.agent.call",
+        "Dispatching message to agent runtime",
+    )
+    await control_plane.record_artifact(
+        run_id,
+        {"id": "agent-artifact", "name": "report.md", "uri": "file:///report.md"},
+    )
+
+    history = await auth_client.get(f"/v1/agents/hermes/sessions/{session_id}/messages")
+
+    assert history.status_code == 200
+    assert history.json()[0]["latest_event"]["type"] == "executor.agent.call"
+    assert history.json()[0]["artifact_count"] == 1
 
 
 async def test_multiple_agent_workloads_have_independent_sessions(
@@ -396,6 +488,69 @@ async def test_deployment_plan_rejects_disabled_target(
 
     assert resp.status_code == 400
     assert "not enabled" in resp.json()["detail"]
+
+
+async def test_preflight_reports_secret_warnings(
+    auth_client: AsyncClient,
+) -> None:
+    await _register(auth_client)
+
+    resp = await auth_client.post(
+        "/v1/workloads/hermes/preflight",
+        json={"target": "local", "env": "dev"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "warning"
+    secrets = next(check for check in body["checks"] if check["name"] == "secrets")
+    assert "OPENAI_API_KEY" in secrets["metadata"]["missing"]
+
+
+async def test_deployment_operation_plan_and_sync(
+    auth_client: AsyncClient,
+) -> None:
+    await _register(auth_client)
+
+    plan = await auth_client.post(
+        "/v1/deployment-operations",
+        json={"action": "plan", "workload_name": "hermes", "target": "local"},
+    )
+    assert plan.status_code == 202
+    assert plan.json()["status"] == "succeeded"
+
+    events = await auth_client.get(
+        f"/v1/deployment-operations/{plan.json()['operation_id']}/events"
+    )
+    assert events.status_code == 200
+    assert events.json()[0]["type"] == "operation.plan"
+
+    sync = await auth_client.post(
+        "/v1/deployment-operations",
+        json={
+            "action": "sync",
+            "workload_name": "hermes",
+            "target": "local",
+            "metadata": {"status": "running"},
+        },
+    )
+    assert sync.status_code == 202
+    deployments = await auth_client.get("/v1/deployments?workload_name=hermes")
+    assert deployments.json()[0]["status"] == "running"
+
+
+async def test_deployment_operation_apply_is_blocked_without_controller(
+    auth_client: AsyncClient,
+) -> None:
+    await _register(auth_client)
+
+    resp = await auth_client.post(
+        "/v1/deployment-operations",
+        json={"action": "apply", "workload_name": "hermes", "target": "local"},
+    )
+
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "failed"
 
 
 async def test_external_deployment_plan_records_runtime_without_apply(

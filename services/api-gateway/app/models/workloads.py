@@ -61,6 +61,52 @@ class RunArtifact(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class WorkloadTemplateParameter(BaseModel):
+    name: str
+    label: str
+    type: str = "string"
+    required: bool = True
+    default: Any | None = None
+    description: str | None = None
+    options: list[str] = Field(default_factory=list)
+
+
+class WorkloadTemplateInfo(BaseModel):
+    id: str
+    name: str
+    category: str
+    description: str
+    workload_type: str
+    tags: list[str] = Field(default_factory=list)
+    parameters: list[WorkloadTemplateParameter] = Field(default_factory=list)
+    manifest: dict[str, Any] | None = None
+
+
+class WorkloadFromTemplateRequest(BaseModel):
+    template_id: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreflightRequest(BaseModel):
+    target: str = Field(default="local", pattern="^(local|kubernetes|k8s|external)$")
+    env: str = Field(default="dev", min_length=1, max_length=64)
+
+
+class PreflightCheck(BaseModel):
+    name: str
+    status: str = Field(pattern="^(passed|warning|failed)$")
+    message: str
+    remediation: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreflightResponse(BaseModel):
+    workload_name: str
+    target: str
+    status: str = Field(pattern="^(passed|warning|failed)$")
+    checks: list[PreflightCheck]
+
+
 class AgentSessionRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -83,6 +129,19 @@ class AgentMessageResponse(BaseModel):
     session_id: str
     status: str
     created_at: str
+
+
+class AgentMessageHistoryItem(BaseModel):
+    message_id: str
+    session_id: str
+    role: str
+    message: str
+    context: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    run_id: str | None = None
+    run_status: str | None = None
+    latest_event: dict[str, Any] | None = None
+    artifact_count: int = 0
 
 
 class DeploymentRequest(BaseModel):
@@ -113,6 +172,36 @@ class DeploymentPlanResponse(BaseModel):
     files: list[str] = Field(default_factory=list)
     commands: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+class DeploymentOperationRequest(BaseModel):
+    action: str = Field(pattern="^(plan|sync|apply|logs|undeploy)$")
+    workload_name: str
+    target: str = Field(default="local", pattern="^(local|kubernetes|k8s|external)$")
+    env: str = Field(default="dev", min_length=1, max_length=64)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeploymentOperationResponse(BaseModel):
+    operation_id: str
+    action: str
+    workload_name: str
+    target: str
+    status: str
+    user: str
+    created_at: str
+    updated_at: str | None = None
+    completed_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeploymentOperationEvent(BaseModel):
+    id: str
+    operation_id: str
+    timestamp: str
+    type: str
+    message: str
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkloadHealthResponse(BaseModel):

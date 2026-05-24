@@ -130,6 +130,39 @@ CONTROL_PLANE_MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON channel_messages (session_id, created_at ASC);
         """,
     ),
+    (
+        3,
+        """
+        CREATE TABLE IF NOT EXISTS deployment_operations (
+            operation_id uuid PRIMARY KEY,
+            action text NOT NULL,
+            workload_name text NOT NULL,
+            target text NOT NULL,
+            status text NOT NULL,
+            user_subject text NOT NULL,
+            metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            completed_at timestamptz
+        );
+
+        CREATE INDEX IF NOT EXISTS deployment_operations_user_created_idx
+            ON deployment_operations (user_subject, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS deployment_operation_events (
+            id bigserial PRIMARY KEY,
+            operation_id uuid NOT NULL
+                REFERENCES deployment_operations(operation_id) ON DELETE CASCADE,
+            timestamp timestamptz NOT NULL DEFAULT now(),
+            type text NOT NULL,
+            message text NOT NULL,
+            data jsonb NOT NULL DEFAULT '{}'::jsonb
+        );
+
+        CREATE INDEX IF NOT EXISTS deployment_operation_events_operation_idx
+            ON deployment_operation_events (operation_id, id ASC);
+        """,
+    ),
 )
 
 
@@ -236,6 +269,28 @@ class StoredDeployment(BaseModel):
     updated_at: str | None = None
     endpoint: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StoredDeploymentOperation(BaseModel):
+    operation_id: str
+    action: str
+    workload_name: str
+    target: str
+    status: str
+    user: str
+    created_at: str
+    updated_at: str | None = None
+    completed_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StoredDeploymentOperationEvent(BaseModel):
+    id: str
+    operation_id: str
+    timestamp: str
+    type: str
+    message: str
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class StoredChannelMessage(BaseModel):
@@ -372,6 +427,38 @@ class ControlPlaneRepository(Protocol):
 
     async def get_deployment(self, deployment_id: str) -> StoredDeployment | None: ...
 
+    async def create_deployment_operation(
+        self,
+        operation_id: str,
+        action: str,
+        workload_name: str,
+        target: str,
+        status: str,
+        user: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        now: str | None = None,
+        completed_at: str | None = None,
+    ) -> StoredDeploymentOperation: ...
+
+    async def get_deployment_operation(
+        self, operation_id: str
+    ) -> StoredDeploymentOperation | None: ...
+
+    async def append_deployment_operation_event(
+        self,
+        operation_id: str,
+        event_type: str,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+        timestamp: str | None = None,
+    ) -> StoredDeploymentOperationEvent: ...
+
+    async def list_deployment_operation_events(
+        self, operation_id: str
+    ) -> list[StoredDeploymentOperationEvent]: ...
+
     async def record_channel_message(
         self,
         channel: str,
@@ -403,9 +490,14 @@ class InMemoryControlPlaneRepository:
         self.sessions: dict[str, StoredAgentSession] = {}
         self.messages: dict[str, list[StoredAgentMessage]] = {}
         self.deployments: dict[str, StoredDeployment] = {}
+        self.deployment_operations: dict[str, StoredDeploymentOperation] = {}
+        self.deployment_operation_events: dict[
+            str, list[StoredDeploymentOperationEvent]
+        ] = {}
         self.channel_messages: list[StoredChannelMessage] = []
         self._event_id = 0
         self._message_id = 0
+        self._deployment_operation_event_id = 0
         self._channel_message_id = 0
 
     async def init(self) -> None:
@@ -650,6 +742,66 @@ class InMemoryControlPlaneRepository:
 
     async def get_deployment(self, deployment_id: str) -> StoredDeployment | None:
         return self.deployments.get(deployment_id)
+
+    async def create_deployment_operation(
+        self,
+        operation_id: str,
+        action: str,
+        workload_name: str,
+        target: str,
+        status: str,
+        user: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        now: str | None = None,
+        completed_at: str | None = None,
+    ) -> StoredDeploymentOperation:
+        timestamp = now or utc_now_iso()
+        operation = StoredDeploymentOperation(
+            operation_id=operation_id,
+            action=action,
+            workload_name=workload_name,
+            target=target,
+            status=status,
+            user=user,
+            metadata=metadata or {},
+            created_at=timestamp,
+            updated_at=timestamp,
+            completed_at=completed_at,
+        )
+        self.deployment_operations[operation_id] = operation
+        return operation
+
+    async def get_deployment_operation(
+        self, operation_id: str
+    ) -> StoredDeploymentOperation | None:
+        return self.deployment_operations.get(operation_id)
+
+    async def append_deployment_operation_event(
+        self,
+        operation_id: str,
+        event_type: str,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+        timestamp: str | None = None,
+    ) -> StoredDeploymentOperationEvent:
+        self._deployment_operation_event_id += 1
+        event = StoredDeploymentOperationEvent(
+            id=str(self._deployment_operation_event_id),
+            operation_id=operation_id,
+            timestamp=timestamp or utc_now_iso(),
+            type=event_type,
+            message=message,
+            data=data or {},
+        )
+        self.deployment_operation_events.setdefault(operation_id, []).append(event)
+        return event
+
+    async def list_deployment_operation_events(
+        self, operation_id: str
+    ) -> list[StoredDeploymentOperationEvent]:
+        return list(self.deployment_operation_events.get(operation_id, []))
 
     async def record_channel_message(
         self,
@@ -1142,6 +1294,98 @@ class PostgresControlPlaneRepository:
         )
         return _deployment_from_row(row) if row else None
 
+    async def create_deployment_operation(
+        self,
+        operation_id: str,
+        action: str,
+        workload_name: str,
+        target: str,
+        status: str,
+        user: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        now: str | None = None,
+        completed_at: str | None = None,
+    ) -> StoredDeploymentOperation:
+        timestamp = _pg_timestamp(now or utc_now_iso())
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO deployment_operations (
+                operation_id, action, workload_name, target, status, user_subject,
+                metadata, created_at, updated_at, completed_at
+            )
+            VALUES (
+                $1::uuid, $2, $3, $4, $5, $6, $7::jsonb,
+                $8::timestamptz, $8::timestamptz, $9::timestamptz
+            )
+            RETURNING operation_id::text, action, workload_name, target, status,
+                user_subject, metadata, created_at, updated_at, completed_at
+            """,
+            operation_id,
+            action,
+            workload_name,
+            target,
+            status,
+            user,
+            json.dumps(metadata or {}),
+            timestamp,
+            _pg_timestamp(completed_at),
+        )
+        return _deployment_operation_from_row(row)
+
+    async def get_deployment_operation(
+        self, operation_id: str
+    ) -> StoredDeploymentOperation | None:
+        row = await self.pool.fetchrow(
+            """
+            SELECT operation_id::text, action, workload_name, target, status,
+                user_subject, metadata, created_at, updated_at, completed_at
+            FROM deployment_operations
+            WHERE operation_id = $1::uuid
+            """,
+            operation_id,
+        )
+        return _deployment_operation_from_row(row) if row else None
+
+    async def append_deployment_operation_event(
+        self,
+        operation_id: str,
+        event_type: str,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+        timestamp: str | None = None,
+    ) -> StoredDeploymentOperationEvent:
+        row = await self.pool.fetchrow(
+            """
+            INSERT INTO deployment_operation_events (
+                operation_id, timestamp, type, message, data
+            )
+            VALUES ($1::uuid, $2::timestamptz, $3, $4, $5::jsonb)
+            RETURNING id::text, operation_id::text, timestamp, type, message, data
+            """,
+            operation_id,
+            _pg_timestamp(timestamp or utc_now_iso()),
+            event_type,
+            message,
+            json.dumps(data or {}),
+        )
+        return _deployment_operation_event_from_row(row)
+
+    async def list_deployment_operation_events(
+        self, operation_id: str
+    ) -> list[StoredDeploymentOperationEvent]:
+        rows = await self.pool.fetch(
+            """
+            SELECT id::text, operation_id::text, timestamp, type, message, data
+            FROM deployment_operation_events
+            WHERE operation_id = $1::uuid
+            ORDER BY id ASC
+            """,
+            operation_id,
+        )
+        return [_deployment_operation_event_from_row(row) for row in rows]
+
     async def record_channel_message(
         self,
         channel: str,
@@ -1302,6 +1546,34 @@ def _deployment_from_row(row: Any) -> StoredDeployment:
         metadata=_json_dict(row["metadata"]) or {},
         created_at=str(_iso(row["created_at"])),
         updated_at=_iso(row["updated_at"]),
+    )
+
+
+def _deployment_operation_from_row(row: Any) -> StoredDeploymentOperation:
+    return StoredDeploymentOperation(
+        operation_id=str(row["operation_id"]),
+        action=str(row["action"]),
+        workload_name=str(row["workload_name"]),
+        target=str(row["target"]),
+        status=str(row["status"]),
+        user=str(row["user_subject"]),
+        metadata=_json_dict(row["metadata"]) or {},
+        created_at=str(_iso(row["created_at"])),
+        updated_at=_iso(row["updated_at"]),
+        completed_at=_iso(row["completed_at"]),
+    )
+
+
+def _deployment_operation_event_from_row(
+    row: Any,
+) -> StoredDeploymentOperationEvent:
+    return StoredDeploymentOperationEvent(
+        id=str(row["id"]),
+        operation_id=str(row["operation_id"]),
+        timestamp=str(_iso(row["timestamp"])),
+        type=str(row["type"]),
+        message=str(row["message"]),
+        data=_json_dict(row["data"]) or {},
     )
 
 
