@@ -150,8 +150,7 @@ def _deployment_plan_response(
             files=[compose_file],
             commands=[
                 "moira deploy local",
-                "docker compose -f docker-compose.yml "
-                f"-f {compose_file} up -d",
+                f"docker compose -f docker-compose.yml -f {compose_file} up -d",
                 "moira deploy local --register",
             ],
             notes=[
