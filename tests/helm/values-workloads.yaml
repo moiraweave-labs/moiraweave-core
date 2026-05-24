@@ -1,0 +1,39 @@
+workloads:
+  hermes:
+    enabled: true
+    type: agent-service
+    image: ghcr.io/nousresearch/hermes-agent:latest
+    deployment:
+      mode: managed
+      targets:
+        - local
+        - kubernetes
+      serviceName: hermes
+      replicas: 1
+    execution:
+      mode: session
+      timeoutSeconds: 172800
+    ports:
+      - name: http
+        port: 8642
+    env:
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: "0.0.0.0"
+      API_SERVER_PORT: "8642"
+    secrets:
+      - HERMES_API_SERVER_KEY
+    persistence:
+      enabled: true
+      mountPath: /data
+    agent:
+      adapter: hermes
+      authTokenEnv: HERMES_API_SERVER_KEY
+      workspaceMount: /workspace
+  external-hermes:
+    enabled: false
+    type: agent-service
+    endpoint: https://agents.example.com/hermes
+    deployment:
+      mode: external
+    agent:
+      adapter: hermes

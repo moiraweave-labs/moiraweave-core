@@ -245,5 +245,11 @@ modelsCache:
 # ---------------------------------------------------------------------------
 # Generic AI workloads rendered from workload.yaml manifests.
 # Prefer using `moira deploy k8s` to generate this block.
+#
+# Managed workloads are rendered as in-namespace Deployments and Services.
+# Their Kubernetes Service name defaults to workload metadata.name so workers can
+# resolve the same runtime URL used in local Compose: http://<workload>:<port>.
+# External workloads are kept in the control plane only and must set
+# spec.endpoint in their workload manifest.
 # ---------------------------------------------------------------------------
 workloads: {}

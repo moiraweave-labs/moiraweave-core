@@ -95,6 +95,10 @@ jobs:
         run: |
           curl -sSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm lint infra/helm/moiraweave
+          helm template moiraweave infra/helm/moiraweave \
+            -f tests/helm/values-workloads.yaml \
+            >/tmp/moiraweave-workloads.yaml
+          grep -q "name: hermes" /tmp/moiraweave-workloads.yaml
 
       - name: YAML lint — infra/k8s
         run: uv run yamllint -d relaxed infra/k8s/

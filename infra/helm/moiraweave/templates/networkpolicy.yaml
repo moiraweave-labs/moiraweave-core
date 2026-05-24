@@ -22,7 +22,7 @@ spec:
 
 ---
 # 2. API Gateway — accepts inbound HTTP from ingress-nginx only.
-#    Allows outbound to Redis, Postgres, Qdrant, and DNS.
+#    Allows outbound to Redis, Postgres, Qdrant, workload health endpoints, and DNS.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -70,6 +70,12 @@ spec:
       ports:
         - protocol: TCP
           port: 6333
+    # Workload health probes and deployment checks
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "moiraweave.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: workload
     # DNS resolution
     - ports:
         - protocol: UDP
@@ -142,7 +148,7 @@ spec:
           port: 53
 
 ---
-# 4. Workload pods — accept inbound from worker only.
+# 4. Workload pods — accept inbound from worker and api-gateway only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -162,6 +168,10 @@ spec:
             matchLabels:
               {{- include "moiraweave.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: worker
+        - podSelector:
+            matchLabels:
+              {{- include "moiraweave.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
 {{- if .Values.ui.enabled }}
 ---
 # 5. UI — accepts HTTP from ingress-nginx and proxies API requests.

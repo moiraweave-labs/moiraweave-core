@@ -41,6 +41,44 @@ def test_agent_spec_defaults_and_overrides() -> None:
     assert workload.spec.agent.instructions == "Keep responses operational."
     assert workload.spec.agent.workspaceMount == "/workspace"
     assert "telegram" in workload.spec.agent.exposedChannels
+    assert workload.spec.deployment.mode == "managed"
+    assert workload.spec.deployment.targets == ["local", "kubernetes"]
+
+
+def test_external_agent_requires_endpoint_not_image() -> None:
+    workload = WorkloadDefinition.model_validate(
+        {
+            "apiVersion": "moiraweave.io/v1alpha1",
+            "kind": "Workload",
+            "metadata": {"name": "external-hermes"},
+            "spec": {
+                "type": "agent-service",
+                "endpoint": "https://agents.example.com/hermes",
+                "deployment": {"mode": "external"},
+                "agent": {"adapter": "hermes"},
+            },
+        }
+    )
+
+    assert workload.spec.image is None
+    assert workload.spec.endpoint == "https://agents.example.com/hermes"
+    assert workload.spec.deployment.mode == "external"
+
+
+def test_external_agent_without_endpoint_is_invalid() -> None:
+    with pytest.raises(ValueError, match="spec.endpoint is required"):
+        WorkloadDefinition.model_validate(
+            {
+                "apiVersion": "moiraweave.io/v1alpha1",
+                "kind": "Workload",
+                "metadata": {"name": "external-hermes"},
+                "spec": {
+                    "type": "agent-service",
+                    "deployment": {"mode": "external"},
+                    "agent": {"adapter": "hermes"},
+                },
+            }
+        )
 
 
 def test_run_state_transition_policy() -> None:

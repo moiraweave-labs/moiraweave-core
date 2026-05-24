@@ -89,6 +89,16 @@ Fully qualified name for one workload.
 {{- end }}
 
 {{/*
+Stable in-cluster DNS name for one workload runtime.
+Defaults to workload metadata.name so manifests resolve the same way in
+Docker Compose and Kubernetes.
+*/}}
+{{- define "moiraweave.workload.serviceName" -}}
+{{- $deployment := default dict .workload.deployment -}}
+{{- default .name $deployment.serviceName | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Selector labels for one workload.
 */}}
 {{- define "moiraweave.workload.selectorLabels" -}}

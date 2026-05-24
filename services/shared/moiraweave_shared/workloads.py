@@ -13,10 +13,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 WorkloadType = Literal["model-service", "pipeline", "agent-service"]
 ExecutionMode = Literal["sync", "async", "session"]
+DeploymentMode = Literal["managed", "external"]
+DeploymentTarget = Literal["local", "kubernetes"]
 RunStatus = Literal[
     "queued",
     "starting",
@@ -37,6 +39,13 @@ ACTIVE_RUN_STATUSES: set[str] = {
     "cancel_requested",
     "cancelling",
 }
+
+
+def default_deployment_targets() -> list[DeploymentTarget]:
+    """Return the default places where MoiraWeave can deploy workloads."""
+
+    return ["local", "kubernetes"]
+
 
 VALID_RUN_TRANSITIONS: dict[str, set[str]] = {
     "queued": {"starting", "cancel_requested", "failed", "lost"},
@@ -133,6 +142,27 @@ class WorkloadPersistence(BaseModel):
         return value
 
 
+class WorkloadDeploymentSpec(BaseModel):
+    """Where and how MoiraWeave should place the workload runtime."""
+
+    mode: DeploymentMode = "managed"
+    targets: list[DeploymentTarget] = Field(default_factory=default_deployment_targets)
+    serviceName: str | None = None
+    replicas: int = Field(default=1, ge=0)
+    localNetwork: str = "moiraweave-net"
+    namespace: str | None = None
+
+    @field_validator("serviceName", "localNetwork", "namespace")
+    @classmethod
+    def _validate_optional_dns_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("deployment names cannot be empty")
+        return cleaned
+
+
 class PipelineNode(BaseModel):
     """One node in a pipeline workload DAG."""
 
@@ -180,6 +210,7 @@ class WorkloadSpec(BaseModel):
 
     type: WorkloadType
     image: str | None = None
+    deployment: WorkloadDeploymentSpec = Field(default_factory=WorkloadDeploymentSpec)
     execution: WorkloadExecution = Field(default_factory=WorkloadExecution)
     ports: list[WorkloadPort] = Field(default_factory=list)
     persistence: WorkloadPersistence = Field(default_factory=WorkloadPersistence)
@@ -193,13 +224,21 @@ class WorkloadSpec(BaseModel):
     command: list[str] | None = None
     args: list[str] | None = None
 
-    @field_validator("image")
-    @classmethod
-    def _validate_image(cls, value: str | None, info: Any) -> str | None:
-        workload_type = info.data.get("type")
-        if workload_type != "pipeline" and not value:
-            raise ValueError("spec.image is required for model-service and agent-service")
-        return value
+    @model_validator(mode="after")
+    def _validate_runtime_location(self) -> WorkloadSpec:
+        if self.type == "pipeline":
+            return self
+        if self.deployment.mode == "external":
+            if not self.endpoint:
+                raise ValueError(
+                    "spec.endpoint is required when deployment.mode is external"
+                )
+            return self
+        if not self.image:
+            raise ValueError(
+                "spec.image is required for managed model-service and agent-service"
+            )
+        return self
 
 
 class WorkloadDefinition(BaseModel):
