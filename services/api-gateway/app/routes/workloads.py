@@ -43,6 +43,7 @@ from app.models.workloads import (
     AgentSessionRequest,
     AgentSessionResponse,
     ChannelMessageRequest,
+    DeploymentPlanResponse,
     DeploymentRequest,
     DeploymentResponse,
     RunArtifact,
@@ -82,6 +83,103 @@ def _artifact_response(artifact: StoredArtifact) -> RunArtifact:
 
 def _deployment_response(deployment: Any) -> DeploymentResponse:
     return DeploymentResponse(**deployment.model_dump())
+
+
+def _deployment_service_name(workload: WorkloadDefinition) -> str:
+    return workload.spec.deployment.serviceName or workload.metadata.name
+
+
+def _deployment_endpoint(workload: WorkloadDefinition) -> str | None:
+    if workload.spec.endpoint:
+        return workload.spec.endpoint.rstrip("/")
+    if not workload.spec.ports:
+        return None
+    port = workload.spec.ports[0].port
+    return f"http://{_deployment_service_name(workload)}:{port}"
+
+
+def _deployment_plan_response(
+    workload: WorkloadDefinition,
+    *,
+    target: str,
+    env: str,
+) -> DeploymentPlanResponse:
+    requested_target = "kubernetes" if target == "k8s" else target
+    mode = workload.spec.deployment.mode
+    service_name = _deployment_service_name(workload)
+    endpoint = _deployment_endpoint(workload)
+
+    if mode == "external":
+        return DeploymentPlanResponse(
+            workload_name=workload.metadata.name,
+            target="external",
+            mode=mode,
+            service_name=service_name,
+            endpoint=endpoint,
+            commands=[
+                "moira deploy local --register",
+                f"moira deploy k8s --env {env} --register",
+            ],
+            notes=[
+                "Runtime deployment is owned outside MoiraWeave.",
+                "MoiraWeave records the external endpoint for sessions, runs, and health.",
+            ],
+        )
+
+    if requested_target == "external":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="external target is only valid for deployment.mode external",
+        )
+    if requested_target not in workload.spec.deployment.targets:
+        allowed = ", ".join(workload.spec.deployment.targets)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Target {requested_target!r} is not enabled for this workload. "
+            f"Allowed targets: {allowed}",
+        )
+
+    if requested_target == "local":
+        compose_file = ".moiraweave/deploy/docker-compose.workloads.yml"
+        return DeploymentPlanResponse(
+            workload_name=workload.metadata.name,
+            target="local",
+            mode=mode,
+            service_name=service_name,
+            endpoint=endpoint,
+            files=[compose_file],
+            commands=[
+                "moira deploy local",
+                "docker compose -f docker-compose.yml "
+                f"-f {compose_file} up -d",
+                "moira deploy local --register",
+            ],
+            notes=[
+                "The UI can register the deployment record, but local Docker apply "
+                "still runs through CLI or automation with host Docker access.",
+            ],
+        )
+
+    values_file = f".moiraweave/deploy/values-workloads-{env}.yaml"
+    namespace = workload.spec.deployment.namespace or "moiraweave"
+    return DeploymentPlanResponse(
+        workload_name=workload.metadata.name,
+        target="kubernetes",
+        mode=mode,
+        service_name=service_name,
+        endpoint=endpoint,
+        files=[values_file],
+        commands=[
+            f"moira deploy k8s --env {env}",
+            "helm upgrade --install moiraweave infra/helm/moiraweave "
+            f"--namespace {namespace} --create-namespace -f {values_file}",
+            f"moira deploy k8s --env {env} --register",
+        ],
+        notes=[
+            "Kubernetes apply requires cluster credentials and should run from "
+            "CLI, CI, or a future MoiraWeave deployment operator.",
+        ],
+    )
 
 
 async def _all_workloads(
@@ -318,6 +416,20 @@ async def record_workload_deployment(
         now=utc_now_iso(),
     )
     return _deployment_response(deployment)
+
+
+@router.get("/workloads/{name}/deployment-plan", response_model=DeploymentPlanResponse)
+async def workload_deployment_plan(
+    name: str,
+    control_plane: ControlPlane,
+    current_user: CurrentUser,
+    target: str = Query(default="local", pattern="^(local|kubernetes|k8s|external)$"),
+    env: str = Query(default="dev", min_length=1, max_length=64),
+) -> DeploymentPlanResponse:
+    del current_user
+    settings = get_settings()
+    workload = await _get_workload(name, control_plane, settings)
+    return _deployment_plan_response(workload, target=target, env=env)
 
 
 @router.get("/deployments", response_model=list[DeploymentResponse])

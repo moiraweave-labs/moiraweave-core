@@ -104,6 +104,17 @@ class DeploymentResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class DeploymentPlanResponse(BaseModel):
+    workload_name: str
+    target: str
+    mode: str
+    service_name: str | None = None
+    endpoint: str | None = None
+    files: list[str] = Field(default_factory=list)
+    commands: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
 class WorkloadHealthResponse(BaseModel):
     workload_name: str
     status: str

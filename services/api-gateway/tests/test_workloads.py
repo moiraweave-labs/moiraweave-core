@@ -341,6 +341,87 @@ async def test_deployment_record_and_workload_health(auth_client: AsyncClient) -
     assert body["deployments"][0]["metadata"]["compose_project"] == "moiraweave"
 
 
+async def test_local_deployment_plan_describes_cli_and_compose_apply(
+    auth_client: AsyncClient,
+) -> None:
+    await _register(auth_client)
+
+    resp = await auth_client.get("/v1/workloads/hermes/deployment-plan?target=local")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["target"] == "local"
+    assert body["mode"] == "managed"
+    assert body["service_name"] == "hermes"
+    assert body["endpoint"] == "http://hermes:8000"
+    assert ".moiraweave/deploy/docker-compose.workloads.yml" in body["files"]
+    assert "moira deploy local" in body["commands"]
+    assert any(command.startswith("docker compose") for command in body["commands"])
+
+
+async def test_kubernetes_deployment_plan_honors_env_and_namespace(
+    auth_client: AsyncClient,
+) -> None:
+    manifest = _agent_manifest()
+    manifest["spec"]["deployment"] = {
+        "mode": "managed",
+        "targets": ["kubernetes"],
+        "namespace": "agents",
+    }
+    register = await auth_client.post("/v1/workloads", json=manifest)
+    assert register.status_code == 201
+
+    resp = await auth_client.get(
+        "/v1/workloads/hermes/deployment-plan?target=k8s&env=prod"
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["target"] == "kubernetes"
+    assert body["files"] == [".moiraweave/deploy/values-workloads-prod.yaml"]
+    assert any("--namespace agents" in command for command in body["commands"])
+
+
+async def test_deployment_plan_rejects_disabled_target(
+    auth_client: AsyncClient,
+) -> None:
+    manifest = _agent_manifest()
+    manifest["spec"]["deployment"] = {"mode": "managed", "targets": ["local"]}
+    register = await auth_client.post("/v1/workloads", json=manifest)
+    assert register.status_code == 201
+
+    resp = await auth_client.get(
+        "/v1/workloads/hermes/deployment-plan?target=kubernetes"
+    )
+
+    assert resp.status_code == 400
+    assert "not enabled" in resp.json()["detail"]
+
+
+async def test_external_deployment_plan_records_runtime_without_apply(
+    auth_client: AsyncClient,
+) -> None:
+    external = _agent_manifest("external-hermes")
+    spec = external["spec"]
+    spec.pop("image", None)
+    spec["endpoint"] = "https://agents.example.com/hermes"
+    spec["deployment"] = {"mode": "external"}
+
+    register = await auth_client.post("/v1/workloads", json=external)
+    assert register.status_code == 201
+
+    resp = await auth_client.get(
+        "/v1/workloads/external-hermes/deployment-plan?target=external"
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["target"] == "external"
+    assert body["endpoint"] == "https://agents.example.com/hermes"
+    assert body["files"] == []
+    assert any("--register" in command for command in body["commands"])
+
+
 async def test_workload_health_uses_endpoint_probe(
     auth_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
