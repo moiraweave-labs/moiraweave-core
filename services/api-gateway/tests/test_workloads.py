@@ -553,9 +553,9 @@ async def test_secret_inventory_lists_required_names_without_values(
     assert items["OPENAI_API_KEY"]["present"] is True
     assert items["HERMES_API_SERVER_KEY"]["present"] is False
     assert items["HERMES_API_SERVER_KEY"]["workloads"] == ["hermes"]
-    assert "hermes:spec.agent.authTokenEnv" in items["HERMES_API_SERVER_KEY"][
-        "references"
-    ]
+    assert (
+        "hermes:spec.agent.authTokenEnv" in items["HERMES_API_SERVER_KEY"]["references"]
+    )
 
 
 async def test_secret_inventory_unknown_workload_returns_404(
