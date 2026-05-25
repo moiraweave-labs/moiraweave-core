@@ -1,17 +1,17 @@
-"""Tests for moiraweave_step_sdk BaseStep and KServe V2 models."""
+"""Tests for moiraweave_model_sdk BaseModelService and KServe V2 models."""
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
-from moiraweave_step_sdk.base import BaseStep
-from moiraweave_step_sdk.models import InferRequest, InferResponse
+from moiraweave_model_sdk.base import BaseModelService
+from moiraweave_model_sdk.models import InferRequest, InferResponse
 
 # ---------------------------------------------------------------------------
-# Minimal concrete step used across all tests
+# Minimal concrete model service used across all tests
 # ---------------------------------------------------------------------------
 
 
-class EchoStep(BaseStep):
+class EchoModelService(BaseModelService):
     """Returns the first input tensor unchanged."""
 
     @property
@@ -32,7 +32,7 @@ class EchoStep(BaseStep):
 
 @pytest.fixture
 def app() -> FastAPI:
-    return EchoStep().build_app()
+    return EchoModelService().build_app()
 
 
 async def _client_get(app: FastAPI, path: str) -> Response:
@@ -126,7 +126,7 @@ async def test_infer_without_id_omits_id_field(app: FastAPI) -> None:
 # ---------------------------------------------------------------------------
 
 
-class NotReadyStep(EchoStep):
+class NotReadyModelService(EchoModelService):
     @property
     def name(self) -> str:
         return "not-ready"
@@ -135,8 +135,8 @@ class NotReadyStep(EchoStep):
         return False
 
 
-async def test_not_ready_step_returns_false() -> None:
-    app = NotReadyStep().build_app()
+async def test_not_ready_model_service_returns_false() -> None:
+    app = NotReadyModelService().build_app()
     assert (await _client_get(app, "/v2/health/ready")).json() == {"live": False}
     assert (await _client_get(app, "/v2/models/not-ready/ready")).json() == {
         "name": "not-ready",

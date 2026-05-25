@@ -16,8 +16,8 @@ members = [
     "api-gateway",
     "moiraweave",
     "moiraweave-drift-detector",
+    "moiraweave-model-sdk",
     "moiraweave-shared",
-    "moiraweave-step-sdk",
     "worker",
 ]
 
@@ -1962,8 +1962,8 @@ source = { virtual = "." }
 dev = [
     { name = "fakeredis" },
     { name = "httpx" },
+    { name = "moiraweave-model-sdk" },
     { name = "moiraweave-shared" },
-    { name = "moiraweave-step-sdk" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pydantic" },
@@ -1982,8 +1982,8 @@ dev = [
 dev = [
     { name = "fakeredis", specifier = ">=2.26" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "moiraweave-model-sdk", editable = "services/model-sdk" },
     { name = "moiraweave-shared", editable = "services/shared" },
-    { name = "moiraweave-step-sdk", editable = "services/step-sdk" },
     { name = "mypy", specifier = ">=2.0" },
     { name = "pre-commit", specifier = ">=4.0" },
     { name = "pydantic", specifier = ">=2.0" },
@@ -2020,6 +2020,21 @@ requires-dist = [
 ]
 
 [[package]]
+name = "moiraweave-model-sdk"
+version = "0.1.0"
+source = { editable = "services/model-sdk" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "pydantic", specifier = ">=2.0" },
+]
+
+[[package]]
 name = "moiraweave-shared"
 version = "0.1.0"
 source = { editable = "services/shared" }
@@ -2032,21 +2047,6 @@ dependencies = [
 requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-]
-
-[[package]]
-name = "moiraweave-step-sdk"
-version = "0.1.0"
-source = { editable = "services/step-sdk" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "pydantic", specifier = ">=2.0" },
 ]
 
 [[package]]

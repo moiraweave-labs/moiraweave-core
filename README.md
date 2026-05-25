@@ -17,7 +17,7 @@ This repository owns platform runtime capabilities, not customer business logic.
 
 ### Included
 
-- `services/`: API gateway, worker, shared runtime package, adapters, and step SDK
+- `services/`: API gateway, worker, shared runtime package, adapters, and model SDK
 - `infra/`: Helm, Kubernetes, kind, and Terraform assets
 - `monitoring/`: observability assets and dashboards
 - `tests/`: integration and platform-level validation
@@ -27,7 +27,7 @@ This repository owns platform runtime capabilities, not customer business logic.
 - customer workload manifests
 - customer agent/model internals
 - customer environment overlays and secrets
-- step-specific model services in the base runtime compose profile
+- workload-specific model services in the base runtime compose profile
 
 MoiraWeave manages the control plane around agents: deployment, sessions,
 messages, runs, events, cancellation, health, and artifacts. Agent runtimes such

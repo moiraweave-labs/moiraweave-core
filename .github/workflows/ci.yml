@@ -230,14 +230,14 @@ jobs:
       - name: Install all dependencies (workspace root)
         run: uv sync --frozen --all-packages
 
-      - name: Build mock-step image
+      - name: Build mock-model image
         env:
           JWT_SECRET_KEY: ${{ secrets.E2E_JWT_SECRET_KEY }}
         run: |
           docker compose \
             -f docker-compose.yml \
             -f tests/e2e/docker-compose.e2e.yml \
-            build mock-step
+            build mock-model
 
       - name: Start E2E stack (wait for healthchecks)
         env:

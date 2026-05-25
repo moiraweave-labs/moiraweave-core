@@ -1,15 +1,15 @@
 # Build context: moiraweave repo root
-# so we can copy the step-sdk package from services/step-sdk/.
+# so we can copy the model-sdk package from services/model-sdk/.
 FROM python:3.13-slim
 
 WORKDIR /app
 
-# Install step-sdk from source (not published to PyPI yet)
-COPY services/step-sdk/ /tmp/step-sdk/
-RUN pip install --no-cache-dir /tmp/step-sdk/ uvicorn[standard]
+# Install model-sdk from source (not published to PyPI yet)
+COPY services/model-sdk/ /tmp/model-sdk/
+RUN pip install --no-cache-dir /tmp/model-sdk/ uvicorn[standard]
 
-# Copy the minimal step implementation
-COPY tests/e2e/mock_step/app/ /app/
+# Copy the minimal model implementation
+COPY tests/e2e/mock_model/app/ /app/
 
 EXPOSE 8080
 
