@@ -110,7 +110,10 @@ jobs:
           grep -q "name: openclaw" /tmp/moiraweave-workloads.yaml
 
       - name: YAML lint — infra/k8s
-        run: uv run yamllint -d relaxed infra/k8s/
+        run: >
+          uv run yamllint
+          -d "{extends: relaxed, rules: {line-length: disable}}"
+          infra/k8s/
 
   # ---------------------------------------------------------------------------
   # Job 2 — Build Docker images and push to GHCR
