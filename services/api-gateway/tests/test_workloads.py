@@ -119,6 +119,26 @@ async def test_create_workload_from_template_registers_manifest(
     assert body["manifest"]["spec"]["command"] == ["python", "-u", "-c"]
 
 
+async def test_agent_template_accepts_runtime_owned_channels(
+    auth_client: AsyncClient,
+) -> None:
+    resp = await auth_client.post(
+        "/v1/workloads/from-template",
+        json={
+            "template_id": "hermes",
+            "parameters": {
+                "name": "Hermes Ops",
+                "external_channels": "Telegram, slack",
+            },
+        },
+    )
+
+    assert resp.status_code == 201
+    agent = resp.json()["manifest"]["spec"]["agent"]
+    assert agent["exposedChannels"] == ["ui", "api"]
+    assert agent["externalOwnedChannels"] == ["telegram", "slack"]
+
+
 async def test_submit_run_queues_dispatch(
     auth_client: AsyncClient,
     fake_redis: FakeRedis,

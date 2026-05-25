@@ -146,6 +146,13 @@ _TEMPLATE_PARAMETERS: dict[str, list[WorkloadTemplateParameter]] = {
             default="hermes-agent",
             required=False,
         ),
+        WorkloadTemplateParameter(
+            name="external_channels",
+            label="Runtime-owned channels",
+            default="",
+            required=False,
+            description="Comma-separated channels handled by the runtime, for example telegram.",
+        ),
     ],
     "openclaw": [
         WorkloadTemplateParameter(name="name", label="Name", default="openclaw"),
@@ -160,6 +167,13 @@ _TEMPLATE_PARAMETERS: dict[str, list[WorkloadTemplateParameter]] = {
         WorkloadTemplateParameter(
             name="agent_id", label="Agent ID", default="main", required=False
         ),
+        WorkloadTemplateParameter(
+            name="external_channels",
+            label="Runtime-owned channels",
+            default="",
+            required=False,
+            description="Comma-separated channels handled by the runtime, for example telegram.",
+        ),
     ],
     "generic-http-agent": [
         WorkloadTemplateParameter(name="name", label="Name", default="generic-agent"),
@@ -172,6 +186,13 @@ _TEMPLATE_PARAMETERS: dict[str, list[WorkloadTemplateParameter]] = {
         WorkloadTemplateParameter(
             name="message_path", label="Message path", default="/message"
         ),
+        WorkloadTemplateParameter(
+            name="external_channels",
+            label="Runtime-owned channels",
+            default="",
+            required=False,
+            description="Comma-separated channels handled by the runtime, for example telegram.",
+        ),
     ],
     "external-agent": [
         WorkloadTemplateParameter(name="name", label="Name", default="external-agent"),
@@ -183,6 +204,13 @@ _TEMPLATE_PARAMETERS: dict[str, list[WorkloadTemplateParameter]] = {
             label="Adapter",
             default="generic-http",
             options=["generic-http", "hermes", "openclaw"],
+        ),
+        WorkloadTemplateParameter(
+            name="external_channels",
+            label="Runtime-owned channels",
+            default="",
+            required=False,
+            description="Comma-separated channels handled by the runtime, for example telegram.",
         ),
     ],
     "model-service": [
@@ -217,6 +245,23 @@ def _template_param(
         if parameter.name == name:
             return parameter.default
     return None
+
+
+def _template_channel_list(
+    params: dict[str, Any],
+    template_id: str,
+    name: str,
+) -> list[str]:
+    value = _template_param(params, template_id, name)
+    items = value if isinstance(value, list) else str(value or "").split(",")
+    channels: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        channel = str(item).strip().lower()
+        if channel and channel not in seen:
+            seen.add(channel)
+            channels.append(channel)
+    return channels
 
 
 def _template_manifest(template_id: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -299,6 +344,11 @@ def _template_manifest(template_id: str, params: dict[str, Any]) -> dict[str, An
                     "authTokenEnv": "HERMES_API_SERVER_KEY",
                     "model": _template_param(params, template_id, "model"),
                     "exposedChannels": ["ui", "api"],
+                    "externalOwnedChannels": _template_channel_list(
+                        params,
+                        template_id,
+                        "external_channels",
+                    ),
                     "capabilities": ["chat", "tools", "long-running"],
                     "pollIntervalSeconds": 2,
                 },
@@ -333,6 +383,11 @@ def _template_manifest(template_id: str, params: dict[str, Any]) -> dict[str, An
                     "authTokenEnv": "OPENCLAW_GATEWAY_TOKEN",
                     "workspaceMount": "/workspace",
                     "exposedChannels": ["ui", "api"],
+                    "externalOwnedChannels": _template_channel_list(
+                        params,
+                        template_id,
+                        "external_channels",
+                    ),
                     "capabilities": ["browser", "tools", "long-running"],
                     "pollIntervalSeconds": 2,
                 },
@@ -366,6 +421,11 @@ def _template_manifest(template_id: str, params: dict[str, Any]) -> dict[str, An
                     "cancelPath": "/cancel",
                     "artifactsPath": "/artifacts",
                     "exposedChannels": ["ui", "api"],
+                    "externalOwnedChannels": _template_channel_list(
+                        params,
+                        template_id,
+                        "external_channels",
+                    ),
                 },
             },
         }
@@ -386,6 +446,11 @@ def _template_manifest(template_id: str, params: dict[str, Any]) -> dict[str, An
                 "agent": {
                     "adapter": _template_param(params, template_id, "adapter"),
                     "exposedChannels": ["ui", "api"],
+                    "externalOwnedChannels": _template_channel_list(
+                        params,
+                        template_id,
+                        "external_channels",
+                    ),
                 },
             },
         }
