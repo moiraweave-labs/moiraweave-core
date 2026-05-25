@@ -60,6 +60,8 @@ from app.models.workloads import (
     RunRequest,
     RunResponse,
     RunStatusResponse,
+    SecretInventoryItem,
+    SecretInventoryResponse,
     WorkloadFromTemplateRequest,
     WorkloadHealthResponse,
     WorkloadInfo,
@@ -922,6 +924,65 @@ def _preflight_status(checks: list[PreflightCheck]) -> str:
     return "passed"
 
 
+def _is_secret_present(name: str) -> bool:
+    value = os.getenv(name)
+    return value is not None and value != ""
+
+
+def _workload_secret_references(workload: WorkloadDefinition) -> list[tuple[str, str]]:
+    references = [(str(secret), "spec.secrets") for secret in workload.spec.secrets]
+    references.extend(
+        (str(secret), "spec.agent.requiredSecrets")
+        for secret in workload.spec.agent.requiredSecrets
+    )
+    if workload.spec.agent.authTokenEnv:
+        references.append((workload.spec.agent.authTokenEnv, "spec.agent.authTokenEnv"))
+    return references
+
+
+def _secret_inventory_response(
+    workloads: list[WorkloadDefinition],
+) -> SecretInventoryResponse:
+    inventory: dict[str, dict[str, Any]] = {}
+    for workload in workloads:
+        workload_name = workload.metadata.name
+        for secret_name, reference in _workload_secret_references(workload):
+            item = inventory.setdefault(
+                secret_name,
+                {"workloads": set(), "references": set()},
+            )
+            item["workloads"].add(workload_name)
+            item["references"].add(f"{workload_name}:{reference}")
+
+    secrets: list[SecretInventoryItem] = []
+    for name, data in sorted(inventory.items()):
+        present = _is_secret_present(name)
+        secrets.append(
+            SecretInventoryItem(
+                name=name,
+                present=present,
+                source="api-env" if present else "missing",
+                workloads=sorted(data["workloads"]),
+                references=sorted(data["references"]),
+                remediation=(
+                    None
+                    if present
+                    else (
+                        "Define this name in the API/worker environment, local .env, "
+                        "Kubernetes Secret, or external secret manager before deploying."
+                    )
+                ),
+            )
+        )
+    missing = sum(1 for secret in secrets if not secret.present)
+    return SecretInventoryResponse(
+        status="warning" if missing else "passed",
+        total=len(secrets),
+        missing=missing,
+        secrets=secrets,
+    )
+
+
 async def _run_preflight(
     workload: WorkloadDefinition,
     *,
@@ -1004,11 +1065,12 @@ async def _run_preflight(
             )
         )
 
-    secret_names = set(workload.spec.secrets)
-    secret_names.update(workload.spec.agent.requiredSecrets)
-    if workload.spec.agent.authTokenEnv:
-        secret_names.add(workload.spec.agent.authTokenEnv)
-    missing_secrets = sorted(name for name in secret_names if not os.getenv(name))
+    secret_names = sorted(
+        {secret_name for secret_name, _ in _workload_secret_references(workload)}
+    )
+    missing_secrets = sorted(
+        name for name in secret_names if not _is_secret_present(name)
+    )
     checks.append(
         PreflightCheck(
             name="secrets",
@@ -1021,7 +1083,7 @@ async def _run_preflight(
             remediation="Add missing names to local .env or Kubernetes secrets."
             if missing_secrets
             else None,
-            metadata={"required": sorted(secret_names), "missing": missing_secrets},
+            metadata={"required": secret_names, "missing": missing_secrets},
         )
     )
 
@@ -1146,6 +1208,23 @@ async def list_workloads(control_plane: ControlPlane) -> list[WorkloadInfo]:
 @router.get("/templates", response_model=list[WorkloadTemplateInfo])
 async def list_workload_templates() -> list[WorkloadTemplateInfo]:
     return [_template_info(template_id) for template_id in _TEMPLATE_PARAMETERS]
+
+
+@router.get("/secrets", response_model=SecretInventoryResponse)
+async def list_secret_inventory(
+    control_plane: ControlPlane,
+    current_user: CurrentUser,
+    workload_name: str | None = None,
+) -> SecretInventoryResponse:
+    del current_user
+    settings = get_settings()
+    workloads = await _all_workloads(control_plane, settings)
+    if workload_name:
+        workload = workloads.get(workload_name)
+        if workload is None:
+            raise HTTPException(status_code=404, detail="Workload not found")
+        return _secret_inventory_response([workload])
+    return _secret_inventory_response(list(workloads.values()))
 
 
 @router.post(

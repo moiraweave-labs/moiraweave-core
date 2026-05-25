@@ -107,6 +107,22 @@ class PreflightResponse(BaseModel):
     checks: list[PreflightCheck]
 
 
+class SecretInventoryItem(BaseModel):
+    name: str
+    present: bool
+    source: str = "api-env"
+    workloads: list[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
+    remediation: str | None = None
+
+
+class SecretInventoryResponse(BaseModel):
+    status: str = Field(pattern="^(passed|warning)$")
+    total: int
+    missing: int
+    secrets: list[SecretInventoryItem]
+
+
 class AgentSessionRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 

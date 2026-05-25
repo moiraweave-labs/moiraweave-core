@@ -512,7 +512,9 @@ async def test_deployment_plan_rejects_disabled_target(
 
 async def test_preflight_reports_secret_warnings(
     auth_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     await _register(auth_client)
 
     resp = await auth_client.post(
@@ -525,6 +527,43 @@ async def test_preflight_reports_secret_warnings(
     assert body["status"] == "warning"
     secrets = next(check for check in body["checks"] if check["name"] == "secrets")
     assert "OPENAI_API_KEY" in secrets["metadata"]["missing"]
+
+
+async def test_secret_inventory_lists_required_names_without_values(
+    auth_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-never-return-this")
+    monkeypatch.delenv("HERMES_API_SERVER_KEY", raising=False)
+    manifest = _agent_manifest()
+    manifest["spec"]["agent"] = {
+        "adapter": "hermes",
+        "authTokenEnv": "HERMES_API_SERVER_KEY",
+    }
+    register = await auth_client.post("/v1/workloads", json=manifest)
+    assert register.status_code == 201
+
+    resp = await auth_client.get("/v1/secrets?workload_name=hermes")
+
+    assert resp.status_code == 200
+    assert "sk-never-return-this" not in resp.text
+    body = resp.json()
+    assert body["status"] == "warning"
+    items = {item["name"]: item for item in body["secrets"]}
+    assert items["OPENAI_API_KEY"]["present"] is True
+    assert items["HERMES_API_SERVER_KEY"]["present"] is False
+    assert items["HERMES_API_SERVER_KEY"]["workloads"] == ["hermes"]
+    assert "hermes:spec.agent.authTokenEnv" in items["HERMES_API_SERVER_KEY"][
+        "references"
+    ]
+
+
+async def test_secret_inventory_unknown_workload_returns_404(
+    auth_client: AsyncClient,
+) -> None:
+    resp = await auth_client.get("/v1/secrets?workload_name=missing")
+
+    assert resp.status_code == 404
 
 
 async def test_deployment_operation_plan_and_sync(
