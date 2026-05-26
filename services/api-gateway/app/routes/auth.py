@@ -21,12 +21,12 @@ def _verify_password(plain: str, expected: str) -> bool:
     return compare_digest(plain.encode(), expected.encode())
 
 
-def _create_access_token(subject: str, settings: Settings) -> str:
+def _create_access_token(subject: str, role: str, settings: Settings) -> str:
     expire = datetime.now(UTC) + timedelta(
         minutes=settings.jwt_access_token_expire_minutes
     )
     return jwt.encode(
-        {"sub": subject, "exp": expire},
+        {"sub": subject, "role": role, "exp": expire},
         settings.jwt_secret_key.get_secret_value(),
         algorithm=settings.jwt_algorithm,
     )
@@ -54,4 +54,8 @@ async def login(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return Token(access_token=_create_access_token(body.username, settings))
+    return Token(
+        access_token=_create_access_token(body.username, settings.demo_role, settings),
+        subject=body.username,
+        role=settings.demo_role,
+    )

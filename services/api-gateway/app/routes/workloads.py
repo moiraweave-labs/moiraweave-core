@@ -36,7 +36,7 @@ from moiraweave_shared.workloads import (
 from starlette.responses import FileResponse, StreamingResponse
 
 from app.config import Settings, get_settings
-from app.dependencies.auth import CurrentUser  # noqa: TC001
+from app.dependencies.auth import AdminUser, CurrentUser, OperatorUser  # noqa: TC001
 from app.dependencies.control_plane import ControlPlane  # noqa: TC001
 from app.dependencies.redis import RedisClient  # noqa: TC001
 from app.middleware.rate_limit import limiter
@@ -1456,7 +1456,11 @@ async def _artifacts_for_runs(
 
 
 @router.get("/workloads", response_model=list[WorkloadInfo])
-async def list_workloads(control_plane: ControlPlane) -> list[WorkloadInfo]:
+async def list_workloads(
+    control_plane: ControlPlane,
+    current_user: CurrentUser,
+) -> list[WorkloadInfo]:
+    del current_user
     settings = get_settings()
     workloads = await _all_workloads(control_plane, settings)
     return [_workload_info(workload) for workload in workloads.values()]
@@ -1470,7 +1474,7 @@ async def list_workload_templates() -> list[WorkloadTemplateInfo]:
 @router.get("/secrets", response_model=SecretInventoryResponse)
 async def list_secret_inventory(
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: AdminUser,
     workload_name: str | None = None,
 ) -> SecretInventoryResponse:
     del current_user
@@ -1492,7 +1496,7 @@ async def list_secret_inventory(
 async def create_workload_from_template(
     body: WorkloadFromTemplateRequest,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ) -> WorkloadInfo:
     manifest = _template_manifest(body.template_id, body.parameters)
     workload = WorkloadDefinition.model_validate(manifest)
@@ -1512,7 +1516,7 @@ async def create_workload_from_template(
 async def register_workload(
     body: WorkloadDefinition,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: AdminUser,
 ) -> WorkloadInfo:
     await control_plane.upsert_workload(body, current_user.subject, now=utc_now_iso())
     return _workload_info(body)
@@ -1522,7 +1526,9 @@ async def register_workload(
 async def get_workload(
     name: str,
     control_plane: ControlPlane,
+    current_user: CurrentUser,
 ) -> WorkloadInfo:
+    del current_user
     settings = get_settings()
     workload = await _get_workload(name, control_plane, settings)
     return _workload_info(workload)
@@ -1537,7 +1543,7 @@ async def record_workload_deployment(
     name: str,
     body: DeploymentRequest,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: OperatorUser,
 ) -> DeploymentResponse:
     settings = get_settings()
     await _get_workload(name, control_plane, settings)
@@ -1575,7 +1581,7 @@ async def workload_preflight(
     body: PreflightRequest,
     redis: RedisClient,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: OperatorUser,
 ) -> PreflightResponse:
     settings = get_settings()
     workload = await _get_workload(name, control_plane, settings)
@@ -1610,7 +1616,7 @@ async def list_deployments(
 async def create_deployment_operation(
     body: DeploymentOperationRequest,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: OperatorUser,
 ) -> DeploymentOperationResponse:
     settings = get_settings()
     normalized_target = "kubernetes" if body.target == "k8s" else body.target
@@ -1825,7 +1831,7 @@ async def submit_run(
     body: RunRequest,
     redis: RedisClient,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: OperatorUser,
 ) -> RunResponse:
     del request
     settings = get_settings()
@@ -1872,7 +1878,7 @@ async def get_run(
 async def cancel_run(
     run_id: str,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: OperatorUser,
 ) -> RunStatusResponse:
     run = await _authorize_run(run_id, control_plane, current_user)
     if run.status not in TERMINAL_RUN_STATUSES:
@@ -2061,7 +2067,7 @@ async def create_agent_session(
     name: str,
     body: AgentSessionRequest,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: OperatorUser,
 ) -> AgentSessionResponse:
     settings = get_settings()
     workload = await _get_workload(name, control_plane, settings)
@@ -2098,7 +2104,7 @@ async def post_agent_message(
     body: AgentMessageRequest,
     redis: RedisClient,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: OperatorUser,
 ) -> AgentMessageResponse:
     settings = get_settings()
     workload = await _get_workload(name, control_plane, settings)
@@ -2149,7 +2155,7 @@ async def post_channel_agent_message(
     body: ChannelMessageRequest,
     redis: RedisClient,
     control_plane: ControlPlane,
-    current_user: CurrentUser,
+    current_user: OperatorUser,
 ) -> AgentMessageResponse:
     settings = get_settings()
     workload = await _get_workload(name, control_plane, settings)

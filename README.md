@@ -48,6 +48,10 @@ Use the CLI instead. The fastest local path is:
 when there are no workloads, starts API, worker, Postgres, Redis, Qdrant, UI,
 and workload services, then registers deployment records.
 
+Local development auth uses `DEMO_USERNAME`, `DEMO_PASSWORD`, and `DEMO_ROLE`.
+Automation can use bearer API keys through `MOIRA_API_KEYS`, with comma-separated
+`key:subject:role` entries. Roles are `viewer`, `operator`, and `admin`.
+
 ## Local development
 
 ```bash

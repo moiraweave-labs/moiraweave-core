@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # Replace with a database-backed user store for production.
     demo_username: str = "admin"
     demo_password: SecretStr = SecretStr("demo-password")
+    demo_role: Literal["admin", "operator", "viewer"] = "admin"
+    # Comma-separated API keys in the form key:subject:role.
+    # Example: MOIRA_API_KEYS=local-dev:cli-admin:admin,ci-token:ci:operator
+    moira_api_keys: str = ""
 
     # OpenTelemetry
     otel_enabled: bool = True
