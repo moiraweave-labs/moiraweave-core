@@ -1626,6 +1626,30 @@ async def create_deployment_operation(
     return _deployment_operation_response(operation)
 
 
+@router.get("/deployment-operations", response_model=list[DeploymentOperationResponse])
+async def list_deployment_operations(
+    control_plane: ControlPlane,
+    current_user: CurrentUser,
+    workload_name: str | None = None,
+    target: str | None = None,
+    status: str | None = None,
+    action: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[DeploymentOperationResponse]:
+    normalized_target = "kubernetes" if target == "k8s" else target
+    operations = await control_plane.list_deployment_operations(
+        current_user.subject,
+        workload_name=workload_name,
+        target=normalized_target,
+        status=status,
+        action=action,
+        limit=limit,
+        offset=offset,
+    )
+    return [_deployment_operation_response(operation) for operation in operations]
+
+
 @router.get(
     "/deployment-operations/{operation_id}",
     response_model=DeploymentOperationResponse,

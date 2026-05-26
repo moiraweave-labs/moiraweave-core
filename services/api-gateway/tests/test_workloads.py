@@ -652,6 +652,16 @@ async def test_deployment_operation_plan_and_sync(
     deployments = await auth_client.get("/v1/deployments?workload_name=hermes")
     assert deployments.json()[0]["status"] == "running"
 
+    operations = await auth_client.get("/v1/deployment-operations?workload_name=hermes")
+    assert operations.status_code == 200
+    assert [item["action"] for item in operations.json()] == ["sync", "plan"]
+
+    filtered = await auth_client.get("/v1/deployment-operations?action=sync")
+    assert filtered.status_code == 200
+    assert [item["operation_id"] for item in filtered.json()] == [
+        sync.json()["operation_id"]
+    ]
+
 
 async def test_deployment_operation_apply_is_blocked_without_controller(
     auth_client: AsyncClient,

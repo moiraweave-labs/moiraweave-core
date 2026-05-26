@@ -445,6 +445,18 @@ class ControlPlaneRepository(Protocol):
         self, operation_id: str
     ) -> StoredDeploymentOperation | None: ...
 
+    async def list_deployment_operations(
+        self,
+        user: str,
+        *,
+        workload_name: str | None = None,
+        target: str | None = None,
+        status: str | None = None,
+        action: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[StoredDeploymentOperation]: ...
+
     async def append_deployment_operation_event(
         self,
         operation_id: str,
@@ -776,6 +788,29 @@ class InMemoryControlPlaneRepository:
         self, operation_id: str
     ) -> StoredDeploymentOperation | None:
         return self.deployment_operations.get(operation_id)
+
+    async def list_deployment_operations(
+        self,
+        user: str,
+        *,
+        workload_name: str | None = None,
+        target: str | None = None,
+        status: str | None = None,
+        action: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[StoredDeploymentOperation]:
+        operations = [
+            operation
+            for operation in self.deployment_operations.values()
+            if operation.user == user
+            and (workload_name is None or operation.workload_name == workload_name)
+            and (target is None or operation.target == target)
+            and (status is None or operation.status == status)
+            and (action is None or operation.action == action)
+        ]
+        operations.sort(key=lambda item: item.created_at, reverse=True)
+        return operations[offset : offset + limit]
 
     async def append_deployment_operation_event(
         self,
@@ -1346,6 +1381,40 @@ class PostgresControlPlaneRepository:
             operation_id,
         )
         return _deployment_operation_from_row(row) if row else None
+
+    async def list_deployment_operations(
+        self,
+        user: str,
+        *,
+        workload_name: str | None = None,
+        target: str | None = None,
+        status: str | None = None,
+        action: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[StoredDeploymentOperation]:
+        rows = await self.pool.fetch(
+            """
+            SELECT operation_id::text, action, workload_name, target, status,
+                user_subject, metadata, created_at, updated_at, completed_at
+            FROM deployment_operations
+            WHERE user_subject = $1
+              AND ($2::text IS NULL OR workload_name = $2)
+              AND ($3::text IS NULL OR target = $3)
+              AND ($4::text IS NULL OR status = $4)
+              AND ($5::text IS NULL OR action = $5)
+            ORDER BY created_at DESC
+            LIMIT $6 OFFSET $7
+            """,
+            user,
+            workload_name,
+            target,
+            status,
+            action,
+            limit,
+            offset,
+        )
+        return [_deployment_operation_from_row(row) for row in rows]
 
     async def append_deployment_operation_event(
         self,
