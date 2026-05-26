@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import re
 from collections.abc import AsyncGenerator  # noqa: TC003
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -31,7 +33,7 @@ from moiraweave_shared.workloads import (
     ensure_run_transition,
     load_workloads,
 )
-from starlette.responses import StreamingResponse
+from starlette.responses import FileResponse, StreamingResponse
 
 from app.config import Settings, get_settings
 from app.dependencies.auth import CurrentUser  # noqa: TC001
@@ -45,6 +47,7 @@ from app.models.workloads import (
     AgentSessionHealthResponse,
     AgentSessionRequest,
     AgentSessionResponse,
+    ArtifactPreviewResponse,
     ChannelMessageRequest,
     DeploymentOperationEvent,
     DeploymentOperationRequest,
@@ -71,6 +74,16 @@ from app.models.workloads import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["workloads"])
+
+_PREVIEWABLE_CONTENT_TYPES = {
+    "application/json",
+    "application/ld+json",
+    "application/x-ndjson",
+    "application/yaml",
+    "application/x-yaml",
+    "application/xml",
+    "application/javascript",
+}
 
 
 _DEMO_AGENT_SCRIPT = r"""
@@ -580,6 +593,75 @@ def _event_response(event: StoredRunEvent) -> RunEvent:
 
 def _artifact_response(artifact: StoredArtifact) -> RunArtifact:
     return RunArtifact(**artifact.model_dump())
+
+
+def _artifact_media_type(artifact: StoredArtifact, path: Path) -> str:
+    return (
+        artifact.content_type
+        or mimetypes.guess_type(path.name)[0]
+        or "application/octet-stream"
+    )
+
+
+def _is_previewable_content_type(content_type: str) -> bool:
+    normalized = content_type.split(";", 1)[0].strip().lower()
+    return (
+        normalized.startswith("text/")
+        or normalized in _PREVIEWABLE_CONTENT_TYPES
+        or normalized.endswith("+json")
+        or normalized.endswith("+xml")
+    )
+
+
+def _artifact_filesystem_path(
+    artifact: StoredArtifact,
+    settings: Settings,
+) -> Path:
+    root = Path(settings.artifacts_dir).expanduser().resolve()
+    parsed = urlparse(artifact.uri)
+
+    if parsed.scheme == "file":
+        candidate = Path(parsed.path).expanduser().resolve()
+    elif parsed.scheme in {"", "local", "artifact", "artifacts"}:
+        relative = (
+            artifact.uri
+            if not parsed.scheme
+            else f"{parsed.netloc}{parsed.path}".lstrip("/")
+        )
+        candidate = (root / relative).expanduser().resolve()
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Artifact URI scheme {parsed.scheme!r} is not served by the API",
+        )
+
+    if candidate != root and root not in candidate.parents:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Artifact path is outside the configured artifact storage root",
+        )
+    if not candidate.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Artifact file was not found in configured artifact storage",
+        )
+    return candidate
+
+
+async def _authorize_artifact(
+    run_id: str,
+    artifact_id: str,
+    control_plane: ControlPlaneRepository,
+    current_user: CurrentUser,
+) -> StoredArtifact:
+    await _authorize_run(run_id, control_plane, current_user)
+    for artifact in await control_plane.list_artifacts(run_id):
+        if artifact.id == artifact_id:
+            return artifact
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Artifact not found",
+    )
 
 
 def _deployment_response(deployment: Any) -> DeploymentResponse:
@@ -1868,6 +1950,68 @@ async def list_run_artifacts(
     await _authorize_run(run_id, control_plane, current_user)
     artifacts = await control_plane.list_artifacts(run_id)
     return [_artifact_response(artifact) for artifact in artifacts]
+
+
+@router.get(
+    "/runs/{run_id}/artifacts/{artifact_id}/preview",
+    response_model=ArtifactPreviewResponse,
+)
+async def preview_run_artifact(
+    run_id: str,
+    artifact_id: str,
+    control_plane: ControlPlane,
+    current_user: CurrentUser,
+    max_bytes: int = Query(default=65536, ge=1, le=262144),
+) -> ArtifactPreviewResponse:
+    artifact = await _authorize_artifact(
+        run_id,
+        artifact_id,
+        control_plane,
+        current_user,
+    )
+    path = _artifact_filesystem_path(artifact, get_settings())
+    content_type = _artifact_media_type(artifact, path)
+    if not _is_previewable_content_type(content_type):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Artifact content type {content_type!r} is not previewable",
+        )
+
+    size_bytes = path.stat().st_size
+    with path.open("rb") as handle:
+        preview_bytes = handle.read(max_bytes + 1)
+    truncated = size_bytes > max_bytes or len(preview_bytes) > max_bytes
+    preview_bytes = preview_bytes[:max_bytes]
+    return ArtifactPreviewResponse(
+        artifact_id=artifact.id,
+        run_id=run_id,
+        name=artifact.name,
+        content_type=content_type,
+        text=preview_bytes.decode("utf-8", errors="replace"),
+        truncated=truncated,
+        size_bytes=size_bytes,
+    )
+
+
+@router.get("/runs/{run_id}/artifacts/{artifact_id}/download")
+async def download_run_artifact(
+    run_id: str,
+    artifact_id: str,
+    control_plane: ControlPlane,
+    current_user: CurrentUser,
+) -> FileResponse:
+    artifact = await _authorize_artifact(
+        run_id,
+        artifact_id,
+        control_plane,
+        current_user,
+    )
+    path = _artifact_filesystem_path(artifact, get_settings())
+    return FileResponse(
+        path,
+        media_type=_artifact_media_type(artifact, path),
+        filename=artifact.name,
+    )
 
 
 @router.get("/artifacts", response_model=list[RunArtifact])

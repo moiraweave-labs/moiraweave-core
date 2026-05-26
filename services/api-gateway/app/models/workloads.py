@@ -61,6 +61,16 @@ class RunArtifact(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ArtifactPreviewResponse(BaseModel):
+    artifact_id: str
+    run_id: str
+    name: str
+    content_type: str | None = None
+    text: str
+    truncated: bool = False
+    size_bytes: int
+
+
 class WorkloadTemplateParameter(BaseModel):
     name: str
     label: str

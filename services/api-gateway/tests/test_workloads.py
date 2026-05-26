@@ -342,6 +342,82 @@ async def test_artifact_library_filters_by_workload_session_and_type(
     assert resp.json()[0]["name"] == "trace.json"
 
 
+async def test_artifact_preview_and_download_from_local_storage(
+    auth_client: AsyncClient,
+    control_plane: InMemoryControlPlaneRepository,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path))
+    output = tmp_path / "reports" / "summary.json"
+    output.parent.mkdir()
+    output.write_text('{"ok": true, "kind": "summary"}', encoding="utf-8")
+
+    await control_plane.create_run(
+        "run-artifact-content",
+        "hermes",
+        {},
+        "testuser",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    await control_plane.record_artifact(
+        "run-artifact-content",
+        {
+            "id": "summary-json",
+            "name": "summary.json",
+            "uri": "local://reports/summary.json",
+            "content_type": "application/json",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+
+    preview = await auth_client.get(
+        "/v1/runs/run-artifact-content/artifacts/summary-json/preview"
+    )
+    download = await auth_client.get(
+        "/v1/runs/run-artifact-content/artifacts/summary-json/download"
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["text"] == '{"ok": true, "kind": "summary"}'
+    assert preview.json()["truncated"] is False
+    assert download.status_code == 200
+    assert download.content == b'{"ok": true, "kind": "summary"}'
+    assert "summary.json" in download.headers["content-disposition"]
+
+
+async def test_artifact_preview_rejects_path_traversal(
+    auth_client: AsyncClient,
+    control_plane: InMemoryControlPlaneRepository,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path))
+    await control_plane.create_run(
+        "run-artifact-escape",
+        "hermes",
+        {},
+        "testuser",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    await control_plane.record_artifact(
+        "run-artifact-escape",
+        {
+            "id": "escape",
+            "name": "escape.txt",
+            "uri": "local://../escape.txt",
+            "content_type": "text/plain",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+
+    preview = await auth_client.get(
+        "/v1/runs/run-artifact-escape/artifacts/escape/preview"
+    )
+
+    assert preview.status_code == 403
+
+
 async def test_agent_session_message_creates_run(
     auth_client: AsyncClient,
     control_plane: InMemoryControlPlaneRepository,
